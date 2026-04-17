@@ -51,3 +51,18 @@ class RSS_ELEV_CONFIG(RslRlRunConfig):
     agent_setup = AgentSetup(
         entry_point="rsl_rl_cfg_entry_point"
     )
+
+@configclass
+class RSS_VISUAL_TRACK_CONFIG(RslRlRunConfig):
+    env_setup = EnvSetup(
+        num_envs=512,
+        task_name="Isaac-MushrVisualTrackRL-v0"
+    )
+    train = RLTrainConfig(
+        num_iterations=5000,
+        rl_algo_lib="rsl",
+        rl_algo_class="ppo"
+    )
+    agent_setup = AgentSetup(
+        entry_point="rsl_rl_cfg_entry_point"
+    )

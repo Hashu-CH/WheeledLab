@@ -30,7 +30,7 @@ from wheeledlab_assets import WHEELEDLAB_ASSETS_DATA_DIR
 from wheeledlab_assets.mushr import MUSHR_SUS_CFG
 from wheeledlab_tasks.common import Mushr4WDActionCfg
 
-from .utils import create_geometry, generate_random_poses, TraversabilityHashmapUtil
+from .utils import create_geometry, generate_random_poses, TraversabilityHashmapUtil, create_track_geometry
 from . import mdp_sensors
 from .mdp import reset_root_state
 
@@ -85,7 +85,7 @@ class VisualTerrainImporterCfg(TerrainImporterCfg):
     group_num_cols = 50
     sub_group_size = (group_num_rows, group_num_cols)
     # num walkers for each sub group
-    num_walkers = 1
+    num_walkers = 5
 
     ####################################
     # Debugging map
@@ -206,6 +206,21 @@ class VisualTerrainImporterCfg(TerrainImporterCfg):
         x_idx = torch.clamp(x_idx, 0, self.num_rows-1)
         y_idx = torch.clamp(y_idx, 0, self.num_cols-1)
         return x_idx, y_idx
+    
+@configclass
+class VisualTrackTerrainImporterCfg(VisualTerrainImporterCfg):
+    # subclass of normal visual terrain, just swap travers hashmap
+    file_name = os.path.join(WHEELEDLAB_ASSETS_DATA_DIR, 'rgb_maps', time.strftime("%Y%m%d_%H%M%S.usd"))
+    traversability_hashmap = create_track_geometry(
+        file_name,
+        VisualTerrainImporterCfg.map_size,
+        VisualTerrainImporterCfg.spacing,
+        VisualTerrainImporterCfg.env_size,
+        VisualTerrainImporterCfg.color_sampling,
+    )
+    usd_path = file_name
+    # config for ground plane
+
 
 @configclass
 class MushrVisualSceneCfg(InteractiveSceneCfg):
@@ -250,6 +265,11 @@ class MushrVisualSceneCfg(InteractiveSceneCfg):
         self.robot.init_state = self.robot.init_state.replace(
             pos=(0.0, 0.0, 0.0)
         )
+
+@configclass
+class MushrVisualTrackSceneCfg(MushrVisualSceneCfg):
+    # override terrain of normal mushr scene cfg with new track cfg
+    terrain = VisualTrackTerrainImporterCfg()
 
 #####################
 ###### EVENTS #######
@@ -384,6 +404,23 @@ class VisualRewardsCfg:
         weight= 7.,
     )
 
+@configclass
+class VisualTrackRewardsCfg:
+    traversablility = RewTerm(
+        func=traversable_reward,
+        weight=5.,
+    )
+
+    vel_rew = RewTerm(
+        func=forward_vel,
+        weight= 7.,
+    )   
+
+    vel_pen = RewTerm(
+        func=low_speed_penalty,
+        weight=-4.,
+    )
+
 ##########################
 ###### TERMINATION #######
 ##########################
@@ -447,12 +484,45 @@ class MushrVisualRLEnvCfg(ManagerBasedRLEnvCfg):
 class MushrVisualRLRandomEnvCfg(MushrVisualRLEnvCfg):
     events: VisualEventsRandomCfg = VisualEventsRandomCfg()
 
+@configclass
+class MushrVisualTrackRLEnvCfg(MushrVisualRLEnvCfg):
+    # randomization for robuystness
+    events: VisualEventsCfg = VisualEventsRandomCfg()
+    # override with new visual track scene
+    rewards: VisualTrackRewardsCfg = VisualTrackRewardsCfg()
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene = MushrVisualTrackSceneCfg(
+            num_envs=self.num_envs, env_spacing=self.env_spacing,
+        )
 ######################
 ###### PLAY ENV ######
 ######################
 
 @configclass
 class MushrVisualPlayEnvCfg(MushrVisualRLEnvCfg):
+    """no terminations"""
+
+    events: VisualEventsCfg = VisualEventsRandomCfg(
+        reset_root_state = EventTerm(
+            func=reset_root_state,
+            params={
+                "dist_noise": 0.,
+                "yaw_noise": 0.,
+            },
+            mode="reset",
+        )
+    )
+
+    rewards: VisualRewardsCfg = None
+    terminations: VisualTerminationsCfg = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+@configclass
+class MushrVisualPlayTrackEnvCfg(MushrVisualTrackRLEnvCfg):
     """no terminations"""
 
     events: VisualEventsCfg = VisualEventsRandomCfg(
