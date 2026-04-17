@@ -211,12 +211,28 @@ class VisualTerrainImporterCfg(TerrainImporterCfg):
 class VisualTrackTerrainImporterCfg(VisualTerrainImporterCfg):
     # subclass of normal visual terrain, just swap travers hashmap
     file_name = os.path.join(WHEELEDLAB_ASSETS_DATA_DIR, 'rgb_maps', time.strftime("%Y%m%d_%H%M%S.usd"))
+
+    row_spacing = 0.5
+    col_spacing = 0.5
+    spacing = (row_spacing, col_spacing)
+
+    num_rows = 500
+    num_cols = 500
+    map_size = (num_rows, num_cols)
+
+    # environments are generated in a grid
+    env_num_rows = 100
+    env_num_cols = 100
+    env_size = (env_num_rows, env_num_cols)
+    
+    # whether to sample colors or not
+    color_sampling = False
     traversability_hashmap = create_track_geometry(
         file_name,
-        VisualTerrainImporterCfg.map_size,
-        VisualTerrainImporterCfg.spacing,
-        VisualTerrainImporterCfg.env_size,
-        VisualTerrainImporterCfg.color_sampling,
+        map_size,
+        spacing,
+        env_size,
+        color_sampling,
     )
     usd_path = file_name
     # config for ground plane
