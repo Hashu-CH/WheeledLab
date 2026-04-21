@@ -4,11 +4,13 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 
 @configclass
 class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    # Training hyperparameters
     num_steps_per_env = 128
     max_iterations = 4000
     save_interval = 50
     experiment_name = "ppo_mushr_racing"
 
+    # Policy architecture hyperparameter
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
@@ -16,6 +18,8 @@ class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         critic_hidden_dims=[64, 64],
         activation="relu",
     )
+
+    # PPO algo hyperparameter
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,

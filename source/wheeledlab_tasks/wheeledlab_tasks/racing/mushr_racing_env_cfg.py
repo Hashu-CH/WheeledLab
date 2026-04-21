@@ -1,65 +1,28 @@
 import os
 import time
 import torch
-import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.managers import (
-    EventTermCfg as EventTerm,
-    RewardTermCfg as RewTerm,
-    TerminationTermCfg as DoneTerm,
-    ObservationGroupCfg as ObsGroup,
-    ObservationTermCfg as ObsTerm,
-    SceneEntityCfg,
-)
 from isaaclab.sensors import TiledCameraCfg
-from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab.envs import ManagerBasedRLEnvCfg
 
 from wheeledlab_assets import WHEELEDLAB_ASSETS_DATA_DIR
 from wheeledlab_assets.mushr import MUSHR_SUS_CFG
 from wheeledlab_tasks.common import Mushr4WDActionCfg
 
-from .utils import generate_random_poses, TraversabilityHashmapUtil, create_track_geometry, compute_map_size
-from . import mdp_sensors
-from .mdp import reset_root_state
-
-
-#####################
-##### OBSERVATIONS ##
-#####################
-
-@configclass
-class RacingObsCfg:
-    """Observation specifications for the environment."""
-    @configclass
-    class PolicyCfg(ObsGroup):
-        """
-        [camera, vx, vy, vz, wx, wy, wz, action1(vel), action2(steering)]
-        """
-        camera = ObsTerm(
-            func=mdp_sensors.camera_data_rgb_flattened_aug,
-            params={"sensor_cfg": SceneEntityCfg("camera")},
-        )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-.1, n_max=.1))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-.1, n_max=.1))
-        last_action = ObsTerm(
-            func=mdp.last_action,
-            clip=(-1., 1.),
-            noise=Unoise(-.1, .1),
-        )
-
-        def __post_init__(self) -> None:
-            self.enable_corruption = False
-            self.concatenate_terms = True
-
-    policy: PolicyCfg = PolicyCfg()
+from .utils import generate_random_poses, create_track_geometry, compute_map_size
+from .mdp import (
+    RacingEventsCfg,
+    RacingEventsRandomCfg,
+    RacingObsCfg,
+    RacingRewardsCfg,
+    RacingTerminationsCfg,
+)
 
 
 @configclass
@@ -195,100 +158,6 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
         self.terrain.configure(self.num_envs)
         self.ground.spawn.size = (self.terrain.width, self.terrain.height)
         self.robot.init_state = self.robot.init_state.replace(pos=(0.0, 0.0, 0.0))
-
-
-#####################
-###### EVENTS #######
-#####################
-
-@configclass
-class RacingEventsCfg:
-    reset_root_state = EventTerm(
-        func=reset_root_state,
-        mode="reset",
-    )
-
-
-@configclass
-class RacingEventsRandomCfg(RacingEventsCfg):
-    change_wheel_friction = EventTerm(
-        func=mdp.randomize_rigid_body_material,
-        mode="startup",
-        params={
-            "static_friction_range": (0.4, 0.6),
-            "dynamic_friction_range": (0.4, 0.6),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 10,
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
-            "make_consistent": False,
-        },
-    )
-
-    add_base_mass = EventTerm(
-        func=mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["base_link"]),
-            "mass_distribution_params": (1.0, 3.0),
-            "operation": "abs",
-        },
-    )
-
-    add_wheel_mass = EventTerm(
-        func=mdp.randomize_rigid_body_mass,
-        mode="startup",
-        params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
-            "mass_distribution_params": (.01, 0.3),
-            "operation": "abs",
-        },
-    )
-
-
-######################
-###### REWARDS #######
-######################
-
-def traversable_reward(env):
-    poses = mdp.root_pos_w(env)[..., :2]
-    traversability = TraversabilityHashmapUtil().get_traversability(poses)
-    return torch.where(traversability, 1., -1.)
-
-
-def low_speed_penalty(env, low_speed_thresh: float = 0.3):
-    lin_speed = torch.norm(mdp.base_lin_vel(env), dim=-1)
-    return torch.where(lin_speed < low_speed_thresh, 1., 0.)
-
-
-def forward_vel(env):
-    return mdp.base_lin_vel(env)[:, 0]
-
-
-@configclass
-class RacingRewardsCfg:
-    traversablility = RewTerm(func=traversable_reward, weight=5.)
-    vel_rew = RewTerm(func=forward_vel, weight=7.)
-    vel_pen = RewTerm(func=low_speed_penalty, weight=-4.)
-
-
-##########################
-###### TERMINATION #######
-##########################
-
-def out_of_map(env):
-    poses = mdp.root_pos_w(env)[..., :2]
-    terrain = env.scene[SceneEntityCfg("terrain").name]
-    width = terrain.cfg.width
-    height = terrain.cfg.height
-    x_out_range = torch.logical_or(poses[..., 0] > width / 2, poses[..., 0] < -width / 2)
-    y_out_range = torch.logical_or(poses[..., 1] > height / 2, poses[..., 1] < -height / 2)
-    return torch.logical_or(x_out_range, y_out_range)
-
-
-@configclass
-class RacingTerminationsCfg:
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    out_range = DoneTerm(func=out_of_map)
 
 
 ######################

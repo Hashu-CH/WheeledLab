@@ -1,9 +1,11 @@
 import torch
 
+import isaaclab.envs.mdp as mdp
 import isaaclab.utils.math as math_utils
 
 from isaaclab.envs import ManagerBasedEnv
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import EventTermCfg as EventTerm, SceneEntityCfg
+from isaaclab.utils import configclass
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.terrains import TerrainImporter
 
@@ -31,3 +33,47 @@ def reset_root_state(
 
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(torch.cat([lin_vels, ang_vels], dim=-1), env_ids=env_ids)
+
+
+@configclass
+class RacingEventsCfg:
+    reset_root_state = EventTerm(
+        func=reset_root_state,
+        mode="reset",
+    )
+
+
+@configclass
+class RacingEventsRandomCfg(RacingEventsCfg):
+    change_wheel_friction = EventTerm(
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "static_friction_range": (0.4, 0.6),
+            "dynamic_friction_range": (0.4, 0.6),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 10,
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
+            "make_consistent": False,
+        },
+    )
+
+    add_base_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=["base_link"]),
+            "mass_distribution_params": (1.0, 3.0),
+            "operation": "abs",
+        },
+    )
+
+    add_wheel_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
+            "mass_distribution_params": (.01, 0.3),
+            "operation": "abs",
+        },
+    )
