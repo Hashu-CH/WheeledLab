@@ -1,16 +1,73 @@
+"""
+Terrain/Plane generation and track-geometry cache for the Racing Task.
+
+Notes:
+
+- Track-aware rewards need a geometric view of the terrain — centerline
+  polyline, tangents, per-tile widths — which live in the TrackCache
+  dataclass below and are populated when the USD is authored.
+- A rasterised traversability grid is still computed *transiently* inside
+  generated_colored_track_plane to colour the ground-plane mesh faces
+  (black = off-track, white = on-track). It gets discarded after the USD is
+  written; reward logic and spawn sampling run off the polyline cache.
+- Coord-frame convention: polylines from curriculum.generate_track are in
+  grid-cell units within a tile (x in [0, env_num_cols], y in [0, env_num_rows]).
+  We convert to WORLD METERS here so reward-time projection doesn't re-derive
+  the transform. All TrackCache arrays are world-frame.
+
+Concern:
+
+- Right now, each environment (robot) gets its own track and tile. Which 1, constraints 
+  compute since we cache track information and can't re-use. 2, will likely be high 
+  variance.
+  We could seed tracks and duplicate them as an easy fix. Most optimally, we allow duplicate 
+  envs on the same tiles. TODO: It's easy to prevent collisions (collision groups) but 
+  much harder to make envs invisible to each other in the camera observation.
+"""
+
 import os
+from dataclasses import dataclass
 import numpy as np
 from pxr import Usd, UsdGeom, UsdPhysics, Gf
 
 from .procedural_track_gen.curriculum import CurriculumConfig, generate_track
-from .traversability_utils import *
 
 
+# ---------------------------------------------------------------------------
+# Per-tile track geometry cache
+# ---------------------------------------------------------------------------
+@dataclass
+class TrackCache:
+    """Per-tile track geometry consumed by reward functions at runtime.
+
+    All world-meter arrays already include the per-tile offset.
+    Padding convention: see projection utils.
+
+    Naming conventions:
+    - num_tiles = num_env_rows * num_env_cols
+    - M_max = max polyline length across all tiles (so cachce can be rectangle tensor)
+    """
+    polylines_w: np.ndarray # (num_tiles, M_max, 2), float32
+    tangents_w: np.ndarray # (num_tiles, M_max - 1, 2), unit vectors
+    segment_valid: np.ndarray # (num_tiles, M_max - 1), bool
+    track_widths_m: np.ndarray # (num_tiles,), meters
+    tile_origins_w: np.ndarray # (num_tiles, 2), world-meter tile centers
+    tile_extent_m: tuple[float, float] # (x_extent, y_extent) per tile, meters (fixed here)
+    tile_cell_bounds: np.ndarray # (num_tiles, 4): row_start, row_end, col_start, col_end
+
+
+# ---------------------------------------------------------------------------
+# Map sizing
+# ---------------------------------------------------------------------------
 def compute_map_size(num_envs, env_size):
-    """Map dimensions (in cells) to pack `num_envs` non-overlapping sub-envs in a square-ish grid.
+    """Map dimensions (in cells) to pack `num_envs` non-overlapping sub-envs in
+    a square-ish grid.
 
-    `num_envs` must be a power of 2. The exponent is split evenly so the env grid is
-    32x32 for 1024, 16x32 for 512, etc.
+    num_tiles == num_envs which lets env_id == tile_id hold.
+
+    Args:
+    - num_envs: total parallel envs (must be a power of 2)
+    - env_size: (env_num_rows, env_num_cols) — cells per tile
     """
     if num_envs < 1 or (num_envs & (num_envs - 1)) != 0:
         raise ValueError(f"num_envs must be a power of 2, got {num_envs}")
@@ -21,8 +78,28 @@ def compute_map_size(num_envs, env_size):
     return grid_rows * env_num_rows, grid_cols * env_num_cols
 
 
+# ---------------------------------------------------------------------------
+# Terrain + track-cache construction
+# ---------------------------------------------------------------------------
 def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
-    """Generate a colored plane with rasterised curriculum tracks."""
+    """Build the colored ground-plane mesh plus the per-tile track cache.
+
+    For each tile we generate a procedural track, rasterise it into the global
+    traversability hashmap, and capture the centerline polyline (converted to
+    world meters) into TrackCache. The cache is the geometric counterpart to
+    the pixel hashmap — rewards use it for centerline projection while the
+    hashmap is what is rendered and 'seen'.
+
+    Args:
+    - map_size: (num_rows, num_cols) — total grid cells across the whole map
+    - spacing: (row_spacing, col_spacing) — meters per cell
+    - env_size: (env_num_rows, env_num_cols) — cells per tile
+    - color_sampling: whether to jitter tile colors (inherited from visual task)
+
+    Returns:
+    - USD mesh fields (vertices, faces, face_counts, face_colors_triangle)
+      and a TrackCache. The rasterised grid is used only for the mesh faces
+    """
     num_rows, num_cols = map_size
     row_spacing, col_spacing = spacing
     env_num_rows, env_num_cols = env_size
@@ -59,6 +136,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             Gf.Vec3f(1.0, 1.0, 1.0),
         ]
 
+    # USD mesh takes triangles. 2 per tile
     faces = []
     face_counts = []
     traversability_hashmap = np.zeros((num_rows, num_cols)).astype(bool)
@@ -71,19 +149,80 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             faces += [v0, v1, v2, v2, v1, v3]
             face_counts += [3, 3]
 
-    # Track difficulty is randomized per env in [0.1, 0.9]
+    # init structs for track data cache
+    num_tiles = num_env_rows * num_env_cols
+    tile_polylines_w: list[np.ndarray] = [] # world-meter polylines per tile
+    tile_track_widths_m: list[float] = [] # world-meter track width per tile
+    tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
+    tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
+
+    # Generate per env tracks and fills track data cache
     for i in range(num_env_rows):
         for j in range(num_env_cols):
+            tile_idx = i * num_env_cols + j
             start_row = i * env_num_rows
-            end_row = (i + 1) * env_num_rows
             start_col = j * env_num_cols
-            end_col = (j + 1) * env_num_cols
-            grid, _ = generate_track(
-                env_size=env_size,
-                config=CurriculumConfig(difficulty=np.random.uniform(.10, .90)),
-            )
-            traversability_hashmap[start_row:end_row, start_col:end_col] = grid
 
+            config = CurriculumConfig(difficulty=np.random.uniform(.10, .90))
+            config.resolve()  # resolve upfront so we can capture config.track_width per-tile
+            grid, polyline = generate_track(env_size=env_size, config=config)
+            traversability_hashmap[
+                start_row:start_row + env_num_rows,
+                start_col:start_col + env_num_cols,
+            ] = grid
+
+            # TODO if polyline is rotated, swap poly cells
+            # Convert tile-local cell-coord polyline -> world meters.
+            poly_cells = np.asarray(polyline, dtype=np.float32)  # (M_tile, 2)
+            world_x = (poly_cells[:, 0] + start_col - num_cols / 2.0) * row_spacing
+            world_y = (poly_cells[:, 1] + start_row - num_rows / 2.0) * col_spacing
+            tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
+
+            # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
+            # means the effective corridor is ~= track_width * spacing).
+            tile_track_widths_m.append(float(config.track_width) * row_spacing)
+
+            # Tile origin: world-meter center of the tile. Stored for viz /
+            # debug; not currently used at runtime — see TODO in
+            # mushr_racing_env_cfg.py about env-local observations.
+            tile_center_col = start_col + env_num_cols / 2.0
+            tile_center_row = start_row + env_num_rows / 2.0
+            tile_origins_w[tile_idx, 0] = (tile_center_col - num_cols / 2.0) * row_spacing
+            tile_origins_w[tile_idx, 1] = (tile_center_row - num_rows / 2.0) * col_spacing
+
+            # Cell bounds: used by per-env spawn restriction.
+            tile_cell_bounds[tile_idx] = (
+                start_row, start_row + env_num_rows,
+                start_col, start_col + env_num_cols,
+            )
+
+    # Pad polylines to uniform shape with NaN; build tangents + segment-valid mask.
+    M_max = max(len(p) for p in tile_polylines_w)
+    polylines_w = np.full((num_tiles, M_max, 2), np.nan, dtype=np.float32)
+    for k, pl in enumerate(tile_polylines_w):
+        polylines_w[k, :len(pl)] = pl
+
+    # Tangent approximations
+    diffs = polylines_w[:, 1:] - polylines_w[:, :-1] # (num_tiles, M_max-1, 2)
+    valid_endpoints = ~np.isnan(polylines_w).any(axis=-1) # (num_tiles, M_max)
+    segment_valid = valid_endpoints[:, :-1] & valid_endpoints[:, 1:] # (num_tiles, M_max-1)
+    lengths = np.linalg.norm(diffs, axis=-1, keepdims=True)
+    safe_lengths = np.where(lengths > 0, lengths, 1.0)
+    tangents_w = (diffs / safe_lengths).astype(np.float32)
+    tangents_w[~segment_valid] = 0.0
+
+    # Save track cache for generated world plane
+    track_cache = TrackCache(
+        polylines_w=polylines_w,
+        tangents_w=tangents_w,
+        segment_valid=segment_valid,
+        track_widths_m=np.asarray(tile_track_widths_m, dtype=np.float32),
+        tile_origins_w=tile_origins_w,
+        tile_extent_m=(env_num_rows * row_spacing, env_num_cols * col_spacing),
+        tile_cell_bounds=tile_cell_bounds,
+    )
+
+    # paint triangle colors for USD mesh init
     face_colors = [
         colors[int(traversability_hashmap[row_index, col_index])]
         for row_index in range(num_rows - 1)
@@ -93,11 +232,27 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     for color in face_colors:
         face_colors_triangle += [color, color]
 
-    return vertices, faces, face_counts, face_colors_triangle, traversability_hashmap
+    return vertices, faces, face_counts, face_colors_triangle, track_cache
 
 
+# ---------------------------------------------------------------------------
+# USD authoring
+# ---------------------------------------------------------------------------
 def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling=False):
-    """Create a USD file with a rasterised curriculum track plane."""
+    """Create a USD file with a rasterised curriculum track plane.
+
+    Returns the TrackCache for storage on RacingTerrainImporterCfg. 
+    
+    Change from visual task: travers_hashmap is used just to color mesh.
+    All rewards follow the pure geometry from the track cache
+
+    Args:
+    - file_path: output USD path (written to disk)
+    - map_size: (num_rows, num_cols)
+    - spacing: (row_spacing, col_spacing) in meters
+    - env_size: cells per tile
+    - color_sampling: whether to jitter tile colors
+    """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     stage = Usd.Stage.CreateNew(file_path)
@@ -109,7 +264,7 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
 
     plane = UsdGeom.Mesh.Define(stage, '/World/colored_plane')
 
-    vertices, faces, face_counts, face_colors, traversability_hashmap = \
+    vertices, faces, face_counts, face_colors, track_cache = \
         generated_colored_track_plane(map_size, spacing, env_size, color_sampling)
 
     plane.GetPointsAttr().Set(vertices)
@@ -123,23 +278,8 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
 
     stage.GetRootLayer().Save()
 
-    traversability_hashmap = traversability_hashmap.tolist()
-    TraversabilityHashmapUtil().set_traversability_hashmap(
-        traversability_hashmap, map_size, spacing,
-    )
-    return traversability_hashmap
+    return track_cache
 
 
-def generate_random_poses(num_poses, row_spacing, col_spacing, traversability_hashmap, margin=0.1):
-    """Sample random traversable (x, y, yaw) poses from a hashmap."""
-    H, W = len(traversability_hashmap), len(traversability_hashmap[0])
-    pose_candidates = np.array(traversability_hashmap).nonzero()
-    idxs = np.random.choice(len(pose_candidates[0]), num_poses)
-    ys, xs = pose_candidates[0][idxs], pose_candidates[1][idxs]
-    poses = []
-    for i in range(len(xs)):
-        x = (float(xs[i]) - W // 2) * row_spacing
-        y = (float(ys[i]) - H // 2) * col_spacing
-        angle = np.random.uniform(0, 360.0)
-        poses.append((x, y, angle))
-    return poses
+# Spawn-pose sampling lives in track_utils.sample_poses_along_polylines —
+# kept next to project_nearest_segment since both operate on the same cache.

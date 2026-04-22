@@ -1,3 +1,24 @@
+"""
+Scene / env configuration for the Mushr Racing Task.
+
+Notes:
+
+- RacingTerrainImporterCfg extends Isaac's TerrainImporterCfg with the
+  track cache so reward functions can pull from it via env.scene.terrain.cfg.
+- env_spacing is 0 and env.scene.env_origins stays at (0, 0, 0) for every
+  env. All state is world-frame: polylines, spawn poses, pose observations,
+  reward projections. The env_id == tile_id invariant is what lets each env
+  index into its own track's cache — it doesn't require separate origins.
+- Lifecycle: MushrRacingSceneCfg.__post_init__ calls terrain.configure(num_envs),
+  which generates the USD and populates track_cache before any reset fires.
+
+Warning: 
+
+- If you ever add an env-local observation term, like dist from position x-y,
+  note that all position states are in world-frame. Meaning that each env's 
+  origin is (0,0,0) and not tile local.
+"""
+
 import os
 import time
 import torch
@@ -15,7 +36,8 @@ from wheeledlab_assets import WHEELEDLAB_ASSETS_DATA_DIR
 from wheeledlab_assets.mushr import MUSHR_SUS_CFG
 from wheeledlab_tasks.common import Mushr4WDActionCfg
 
-from .utils import generate_random_poses, create_track_geometry, compute_map_size
+from .utils import create_track_geometry, compute_map_size, TrackCache
+from .utils.track_utils import project_nearest_segment, sample_poses_along_polylines
 from .mdp import (
     RacingEventsCfg,
     RacingEventsRandomCfg,
@@ -25,27 +47,31 @@ from .mdp import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Spawn pose dataclass (consumed by reset_root_state in events.py)
+# ---------------------------------------------------------------------------
 @configclass
 class InitialPoseCfg:
+    """One spawn pose per resetting env. reset_root_state stacks these into
+    tensors and writes them to the sim. pos/lin_vel/ang_vel are WORLD-frame;
+    rot is absolute yaw in degrees."""
     pos: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rot_euler_xyz_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
     lin_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)
     ang_vel: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
-#####################
-######## SCENE ######
-#####################
-
+# ---------------------------------------------------------------------------
+# Terrain Importer
+# ---------------------------------------------------------------------------
 @configclass
 class RacingTerrainImporterCfg(TerrainImporterCfg):
-    # Map generation parameters
+    # Map generation parameters to make it realistic for how we test in real
     row_spacing = 0.5
     col_spacing = 0.5
     spacing = (row_spacing, col_spacing)
 
-    # Sub-environments sized to match the drifting track's longest side (~5.6m).
-    # 12 cells * 0.5m spacing = 6m per sub-env side.
+    # Sub-environments size to make it realistic for how we test in real
     env_num_rows = 12
     env_num_cols = 12
     env_size = (env_num_rows, env_num_cols)
@@ -60,8 +86,16 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     width = 0.0
     height = 0.0
     file_name = ""
-    traversability_hashmap = None
 
+    # Track tile geometry (set in configure after init)
+    track_cache: TrackCache = None
+    _polylines_t: torch.Tensor = None
+    _tangents_t: torch.Tensor = None  
+    _segment_valid_t: torch.Tensor = None
+    _track_widths_t: torch.Tensor = None 
+    car_width_m: float = 0.28
+
+    # usd setup
     prim_path = "/World/plane"
     terrain_type = "usd"
     usd_path = ""
@@ -75,7 +109,14 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     debug_vis = False
 
     def configure(self, num_envs: int):
-        """Populate map-sizing fields and generate the track USD for `num_envs` sub-envs."""
+        """Populate map-sizing fields and generate the track USD for `num_envs` sub-envs.
+
+        Called from MushrRacingSceneCfg after num envs is initialized. 
+        Writes the USD and populates the track cache.
+
+        Args:
+        - num_envs: total parallel envs (sets tile grid size + track count)
+        """
         self.num_rows, self.num_cols = compute_map_size(num_envs, self.env_size)
         self.map_size = (self.num_rows, self.num_cols)
         self.width = self.num_rows * self.row_spacing
@@ -84,14 +125,80 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
             WHEELEDLAB_ASSETS_DATA_DIR, 'rgb_maps', time.strftime("%Y%m%d_%H%M%S.usd"),
         )
         self.usd_path = self.file_name
-        self.traversability_hashmap = create_track_geometry(
+        # lives on env.scene.terrain.cfg.track_cache
+        self.track_cache = create_track_geometry(
             self.file_name, self.map_size, self.spacing, self.env_size, self.color_sampling,
         )
 
-    def generate_random_poses(self, num_poses):
-        init_poses = generate_random_poses(
-            num_poses, self.row_spacing, self.col_spacing,
-            self.traversability_hashmap, margin=0.1,
+
+    # ---------------------------------------------------------------------------
+    # Stateful Entry Points for Utility Functions
+    # ---------------------------------------------------------------------------
+
+    def _ensure_track_tensors(self, device):
+        """Move cache to GPU 
+
+        Track cache lives on numpy arrays when configured. We need it to be on device
+        torch tensors. We don't know device until car pose is passed to gpu in 
+        project_to_centerline (see below)
+
+        Args:
+        - device: torch device of the incoming query (usually env.device)
+        """
+        if self._polylines_t is not None and self._polylines_t.device == device:
+            # if tensors are already on device then skip
+            return
+        tc = self.track_cache
+        self._polylines_t = torch.as_tensor(tc.polylines_w, dtype=torch.float32, device=device)
+        self._tangents_t = torch.as_tensor(tc.tangents_w, dtype=torch.float32, device=device)
+        self._segment_valid_t = torch.as_tensor(tc.segment_valid, dtype=torch.bool, device=device)
+        self._track_widths_t = torch.as_tensor(tc.track_widths_m, dtype=torch.float32, device=device)
+
+    def project_to_centerline(self, poses_xy_w: torch.Tensor, env_ids: torch.Tensor):
+        """Project each car's (x, y) onto its assigned tile's centerline polyline.
+
+        Method primarily to separate state viewing and actual computation done in 
+        track utils. Used for rewards.
+
+        Args:
+        - poses_xy_w: (N, 2) world-meter car positions
+        - env_ids: (N,) int64 tile indices (env_id == tile_id by invariant)
+
+        Returns:
+        - d_signed: (N,) signed perpendicular distance, pos = left of tangent
+        - tangent_xy: (N, 2) unit tangent at the winning segment
+        - track_width: (N,) world-meter track width (used by cross_track_penalty)
+        """
+        self._ensure_track_tensors(poses_xy_w.device) # upload to device
+        polylines = self._polylines_t[env_ids]
+        tangents = self._tangents_t[env_ids]
+        valid = self._segment_valid_t[env_ids]
+        track_widths = self._track_widths_t[env_ids]
+
+        d_signed, nearest_tangent, _ = project_nearest_segment(
+            polylines, tangents, valid, poses_xy_w,
+        )
+        return d_signed, nearest_tangent, track_widths
+
+    def generate_random_poses(self, num_poses, env_ids=None):
+        """Sample spawn poses for a reset batch.
+
+        Method primarily to separate state viewing and actual computation done in 
+        util init. See track utils for details on how poses are sampled. Used for rewards
+
+        Args:
+        - num_poses: how many poses to sample
+        - env_ids: tensor of env IDs (required — spawn is polyline-based
+          and needs to know which tile's track to sample from)
+        """
+        if env_ids is None or self.track_cache is None:
+            raise ValueError(
+                "requires populated track cache and env ids. Configure() hasn't run yet"
+            )
+        init_poses = sample_poses_along_polylines(
+            self.track_cache, env_ids,
+            car_width_m=self.car_width_m,
+            margin_m=0.0,
         )
         return [
             InitialPoseCfg(
@@ -100,19 +207,10 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
             ) for x, y, angle in init_poses
         ]
 
-    def get_traversability(self, poses):
-        xs, ys = poses[:, 0], poses[:, 1]
-        x_idx, y_idx = self.get_map_id(xs, ys)
-        return torch.tensor(self.traversability_hashmap).to(x_idx.device)[x_idx, y_idx]
 
-    def get_map_id(self, x, y):
-        x_idx = torch.floor((x + self.width / 2 - self.row_spacing / 2) / self.row_spacing).long()
-        y_idx = torch.floor((y + self.height / 2 - self.col_spacing / 2) / self.col_spacing).long()
-        x_idx = torch.clamp(x_idx, 0, self.num_rows - 1)
-        y_idx = torch.clamp(y_idx, 0, self.num_cols - 1)
-        return x_idx, y_idx
-
-
+# ---------------------------------------------------------------------------
+# Scene Configuration
+# ---------------------------------------------------------------------------
 @configclass
 class MushrRacingSceneCfg(InteractiveSceneCfg):
     """Configuration for a Mushr car scene with a racetrack terrain and sensors."""
@@ -133,6 +231,7 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MUSHR_SUS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     ground.init_state.pos = (0.0, 0.0, -1e-4)
 
+    # TODO wire hyper parameters from file so that all hyper params are observable at once
     camera = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/mushr_nano/camera_link/camera",
         update_period=0.1,
@@ -153,17 +252,17 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
 
+    # Called by Env config to initialize scene -> TerrainImporter configure called
     def __post_init__(self):
         super().__post_init__()
-        self.terrain.configure(self.num_envs)
+        self.terrain.configure(self.num_envs) # inits track and cache
         self.ground.spawn.size = (self.terrain.width, self.terrain.height)
         self.robot.init_state = self.robot.init_state.replace(pos=(0.0, 0.0, 0.0))
 
 
-######################
-####### ENV CFG ######
-######################
-
+# ---------------------------------------------------------------------------
+# RL Training Config
+# ---------------------------------------------------------------------------
 @configclass
 class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
     seed: int = 42
@@ -181,18 +280,17 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
         super().__post_init__()
         self.viewer.eye = [40., 0.0, 45.0]
         self.viewer.lookat = [0.0, 0.0, -3.]
-        self.sim.dt = 0.02
-        self.decimation = 10
-        self.episode_length_s = 10
+        self.sim.dt = 0.02 # physics sim timestep in seconds 50Hz = .02
+        self.decimation = 10 # num .dt ticks per policy step 
+        self.episode_length_s = 20 # max episode length in seconds
         self.scene = MushrRacingSceneCfg(
             num_envs=self.num_envs, env_spacing=self.env_spacing,
         )
 
 
-######################
-###### PLAY ENV ######
-######################
-
+# ---------------------------------------------------------------------------
+# Inference Only Config (No Terminations or Rewards)
+# ---------------------------------------------------------------------------
 @configclass
 class MushrRacingPlayEnvCfg(MushrRacingRLEnvCfg):
     """No terminations, deterministic reset."""

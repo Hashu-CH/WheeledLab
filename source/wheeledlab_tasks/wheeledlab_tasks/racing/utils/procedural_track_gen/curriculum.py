@@ -6,6 +6,15 @@ Phase 1 (difficulty < phase_boundary):  open Bezier chains
     - in both the chain file and the resolve fn in this file 
     - if tracks look poor, hand tune till your fingers are sore :)
 Phase 2 (difficulty geq phase_boundary):  full closed loop tracks
+
+Notes: 
+
+- I made this unwisely. Splines are computed in world coordinates 
+  which then have to be converted to grid coordinates for the hashmap.
+  I normalize the spline so I can round based on the grid sizing, 
+  then in the utility. When finding track tangents you have to use 
+  the unnormalized versions of the spline and find the closest 
+  track point. I'm sorry. 
 """
 
 from dataclasses import dataclass
@@ -86,13 +95,14 @@ class CurriculumConfig:
 def generate_track(
     env_size = (100, 100),
     config:    CurriculumConfig    = None,
-) -> tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, list[tuple[float, float]]]:
     """
     Single entry point for the full curriculum.
 
     Returns
         grid : np.ndarray[bool] rasterised traversability map
-        meta : dict - phase, features, config details
+        polyline : list of (x, y) points in tile-local cell coords
+                   (x in [0, cols], y in [0, rows])
     """
     if config is None:
         config = CurriculumConfig()
@@ -125,18 +135,12 @@ def generate_chain(config, rows, cols):
         polyline = [(cols * 0.5, rows * 0.15), (cols * 0.5, rows * 0.85)]
         feat_log = [{"feature": "straight", "intensity": 0.0}]
     temp = np.array(polyline)
-    line_norm = list(map(tuple, temp / np.array([cols, rows])))
+    line_normalized = list(map(tuple, temp / np.array([cols, rows])))
 
     grid = rasterise_track(
-        line_norm, rows, cols, config.track_width, closed=False)
+        line_normalized, rows, cols, config.track_width, closed=False)
 
-    return grid, {
-        "phase": "chain",
-        "features": feat_log,
-        "n_segments": len(segments),
-        "config": config,
-    }
-
+    return grid, polyline
 
 def generate_loop(config, rows, cols):
     """Phase 2: closed loop full track."""
@@ -149,13 +153,8 @@ def generate_loop(config, rows, cols):
     segments = build_spline(pts)
     polyline = build_polylines(segments, config.steps_per_segment)
     temp = np.array(polyline) 
-    line_norm = list(map(tuple, temp / np.array([cols, rows])))
+    line_normalized = list(map(tuple, temp / np.array([cols, rows])))
     grid = rasterise_track(
-        line_norm, rows, cols, config.track_width, closed=True)
+        line_normalized, rows, cols, config.track_width, closed=True)
 
-    return grid, {
-        "phase": "loop",
-        "n_control_points": config.n_control_points,
-        "max_jitter": config.max_jitter,
-        "config": config,
-    }
+    return grid, polyline
