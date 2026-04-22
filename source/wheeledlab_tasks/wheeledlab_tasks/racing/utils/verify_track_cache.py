@@ -48,7 +48,9 @@ def visualize_track_cache(
 
         # Tangent arrows sampled every 10th vertex.
         if len(poly_cell_x) > 1:
-            tang = track_cache.tangents_w[k][valid_pts[:-1]]
+            # Per-segment validity (both endpoints valid); poly_cell_x has V
+            # valid points, so tang must have V - 1 valid segments.
+            tang = track_cache.tangents_w[k][track_cache.segment_valid[k]]
             stride = max(1, len(poly_cell_x) // 10)
             ax.quiver(
                 poly_cell_x[:-1:stride], poly_cell_y[:-1:stride],
