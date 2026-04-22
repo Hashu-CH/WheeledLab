@@ -1,7 +1,7 @@
 """
 Visual test for the per-tile polyline tangent cache built in RacingTerrainImporterCfg.
 
-    python source/wheeledlab_rl/scripts/viz_track_cache.py --num-envs 16 --out /tmp/track_viz.png
+python source/wheeledlab_rl/scripts/viz_track_cache.py --num-envs 16 --out ./imgs/track_viz.png
 
 Pure numpy + matplotlib — does not launch Isaac Sim. We reach into
 wheeledlab_tasks.racing.utils directly (via a sys.path hack that skips the

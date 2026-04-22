@@ -163,7 +163,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             start_row = i * env_num_rows
             start_col = j * env_num_cols
 
-            config = CurriculumConfig(difficulty=np.random.uniform(.10, .90))
+            config = CurriculumConfig(difficulty=np.random.uniform(.10, .90), steps_per_segment=50)
             config.resolve()  # resolve upfront so we can capture config.track_width per-tile
             grid, polyline = generate_track(env_size=env_size, config=config)
             traversability_hashmap[

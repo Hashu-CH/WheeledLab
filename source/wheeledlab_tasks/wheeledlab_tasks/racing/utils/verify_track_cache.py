@@ -55,7 +55,7 @@ def visualize_track_cache(
             ax.quiver(
                 poly_cell_x[:-1:stride], poly_cell_y[:-1:stride],
                 tang[::stride, 0], tang[::stride, 1],
-                color="cyan", scale=20, width=0.005,
+                color="blue", scale=20, width=0.005,
             )
 
         ax.set_title(f"tile {k}  width={track_cache.track_widths_m[k]:.2f}m")
