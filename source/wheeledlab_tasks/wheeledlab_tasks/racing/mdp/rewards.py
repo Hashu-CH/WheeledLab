@@ -28,8 +28,8 @@ from isaaclab.utils import configclass
 def _project(env):
     """Single nearest-segment projection shared by all track-aware reward terms.
 
-    Defers to RacingTerrainImporterCfg.project_to_centerline, which gathers
-    each env's polyline + tangents via the env_id == tile_id invariant.
+    Defers to RacingTerrainImporter.project_to_centerline, which gathers each
+    env's polyline + tangents via the env_id == tile_id invariant.
 
     Args:
     - env: the running environment
@@ -42,7 +42,7 @@ def _project(env):
     """
     poses_xy = mdp.root_pos_w(env)[..., :2] # world frame
     env_ids = torch.arange(env.num_envs, device=poses_xy.device, dtype=torch.long)
-    return env.scene.terrain.cfg.project_to_centerline(poses_xy, env_ids)
+    return env.scene.terrain.project_to_centerline(poses_xy, env_ids)
 
 
 # ---------------------------------------------------------------------------

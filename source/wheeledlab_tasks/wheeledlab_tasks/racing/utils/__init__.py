@@ -6,8 +6,8 @@ Notes:
 - Track-aware rewards need a geometric view of the terrain — centerline
   polyline, tangents, per-tile widths — which live in the TrackCache
   dataclass below and are populated when the USD is authored.
-- A rasterised traversability grid is still computed *transiently* inside
-  generated_colored_track_plane to colour the ground-plane mesh faces
+- A rasterised traversability grid is still computed inside
+  generated_colored_track_plane to color the ground-plane mesh faces
   (black = off-track, white = on-track). It gets discarded after the USD is
   written; reward logic and spawn sampling run off the polyline cache.
 - Coord-frame convention: polylines from curriculum.generate_track are in
@@ -279,7 +279,6 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
     stage.GetRootLayer().Save()
 
     return track_cache
-
 
 # Spawn-pose sampling lives in track_utils.sample_poses_along_polylines —
 # kept next to project_nearest_segment since both operate on the same cache.

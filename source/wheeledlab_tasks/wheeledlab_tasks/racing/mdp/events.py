@@ -6,8 +6,8 @@ Notes:
 - Our 'envs' are parallel robot instances running on a shared terrain. We
   establish the invariant: env_id == tile_id, meaning each env always spawns
   on its assigned track on termination. This lets reward functions read per-env
-  track geometry by simple env_id indexing into RacingTerrainImporterCfg.
-  track_cache.
+  track geometry by simple env_id indexing into
+  env.scene.terrain.track_cache (a RacingTerrainImporter runtime attr).
 - All spatial state in this task is expressed in WORLD coordinates —
   polylines, spawn poses, pose observations, reward projections. Isaac Lab's
   env_spacing is 0 and env.scene.env_origins is left at its default of
@@ -52,7 +52,7 @@ def reset_root_state(
     terrain: TerrainImporter = env.scene.terrain
 
     # env_ids is threaded through so each env spawns inside its own tile.
-    valid_poses = terrain.cfg.generate_random_poses(len(env_ids), env_ids=env_ids)
+    valid_poses = terrain.generate_random_poses(len(env_ids), env_ids=env_ids)
 
     # Unpack valid_poses (a list of InitialPoseCfgs) into sim-usable tensors.
     posns = torch.stack(list(map(lambda x: torch.tensor(x.pos, device=env.device), valid_poses))).float()
