@@ -67,6 +67,10 @@ def main(run_cfg: RunConfig): # TODO: Add SB3 config support
     #### CREATE ENVIRONMENT ####
     ############################
 
+    # Configure the terrain before creating the environment (only for racing task)
+    if hasattr(env_cfg.scene.terrain, 'configure'):
+        env_cfg.scene.terrain.configure(env_cfg.num_envs)
+
     env = gym.make(env_setup.task_name, cfg=env_cfg, render_mode="rgb_array" if log_cfg.video else None)
 
     ####### INSTANTIATE ENV #######
