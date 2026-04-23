@@ -52,6 +52,7 @@ class CurriculumConfig:
     # shared between
     track_width:       Optional[int] = None
     steps_per_segment: int           = 40
+    margin_frac:       float         = 0.05  # inset from tile edge, as fraction of cols/rows; applies to both phases
 
     # phase 2 params
     n_control_points: Optional[int]   = None
@@ -121,7 +122,12 @@ def generate_chain(config, rows, cols):
     if config.segment_length is None:
         config.segment_length = min(rows, cols) * 0.15
 
-    start_pos = np.array([cols * 0.2, rows * 0.5])
+    margin_x = cols * config.margin_frac
+    margin_y = rows * config.margin_frac
+
+    # Start 20% into the usable (post-margin) width, vertically centered.
+    usable_w = cols - 2 * margin_x
+    start_pos = np.array([margin_x + usable_w * 0.2, rows * 0.5])
     start_tan = np.array([1.0, 0.0]) * config.segment_length
 
     segments, feat_log = build_chain(
@@ -129,6 +135,7 @@ def generate_chain(config, rows, cols):
         config.difficulty, cols, rows,
         config.intensity_range,
         start_pos, start_tan,
+        margin_x=margin_x, margin_y=margin_y,
     )
     polyline = build_polylines(segments, config.steps_per_segment)
     if len(polyline) == 0:
@@ -146,7 +153,7 @@ def generate_loop(config, rows, cols):
     """Phase 2: closed loop full track."""
     raw = generate_points(
         config.n_control_points, cols, rows,
-        config.min_radius, margin=cols * 0.05,
+        config.min_radius, margin=cols * config.margin_frac,
         max_jitter=config.max_jitter,
     )
     pts = sort_clockwise(raw)

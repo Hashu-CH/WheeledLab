@@ -1,19 +1,32 @@
 # WheeledLab Racing — single source of truth for commonly-tuned hyperparameters.
 #
-# NOT INCLUDED: terrain layout (row/col spacing, env_num_rows/cols,
-# car_width_m, ground friction), camera intrinsics, Mushr4WDActionCfg kinematics.
+# NOT INCLUDED: camera intrinsics, Mushr4WDActionCfg kinematics, ground friction.
 
 # Training Variables
 run:
   num_envs: 512        # parallel envs (envs == num tracks)
   num_iterations: 1000 # upper bouhd on total policy updates
 
-# Running Environment Variables 
+# Running Environment Variables
 env:
   seed: 42             # env RNG seed
   episode_length_s: 20 # max episode length (seconds)
   sim_dt: 0.02         # physics timestep (seconds)
   decimation: 10       # physics steps per policy step
+
+# Terrain Layout — tile sizing + per-tile procedural track generation.
+terrain:
+  env_num_rows: 25          # cells per tile (rows)
+  env_num_cols: 25          # cells per tile (cols)
+  row_spacing: 0.5          # meters per cell (rows); world tile height = env_num_rows * row_spacing
+  col_spacing: 0.5          # meters per cell (cols); world tile width  = env_num_cols * col_spacing
+  color_sampling: false     # jitter tile colors for visual diversity
+  car_width_m: 0.28         # used by cross-track penalty to define in-band width
+  difficulty_range: [0, 1]  # sampled uniformly per tile
+  phase_boundary: 0.0       # difficulty threshold from phase 0 to 1
+  track_width_cells: 1      # rasterized track width in grid cells (world meters ≈ cells * row_spacing)
+  steps_per_segment: 30     # polyline resolution per segment
+  margin_frac: 0.1         # inset from edge fraction of cols/rows
 
 # PPO Parameters
 ppo:

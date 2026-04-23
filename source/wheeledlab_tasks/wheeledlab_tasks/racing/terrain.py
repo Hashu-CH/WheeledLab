@@ -57,6 +57,7 @@ class RacingTerrainImporter(TerrainImporter):
         self._tangents_t: torch.Tensor | None = None
         self._segment_valid_t: torch.Tensor | None = None
         self._track_widths_t: torch.Tensor | None = None
+        self._tile_origins_t: torch.Tensor | None = None
 
     # ------------------------------------------------------------------
     # Device-side tensor cache
@@ -71,6 +72,7 @@ class RacingTerrainImporter(TerrainImporter):
         self._tangents_t = torch.as_tensor(tc.tangents_w, dtype=torch.float32, device=device)
         self._segment_valid_t = torch.as_tensor(tc.segment_valid, dtype=torch.bool, device=device)
         self._track_widths_t = torch.as_tensor(tc.track_widths_m, dtype=torch.float32, device=device)
+        self._tile_origins_t = torch.as_tensor(tc.tile_origins_w, dtype=torch.float32, device=device)
 
     # ------------------------------------------------------------------
     # Reward / reset entry points (used by mdp.rewards and mdp.events)
@@ -99,6 +101,30 @@ class RacingTerrainImporter(TerrainImporter):
             polylines, tangents, valid, poses_xy_w,
         )
         return d_signed, nearest_tangent, track_widths
+
+    def out_of_tile(self, poses_xy_w: torch.Tensor, env_ids: torch.Tensor) -> torch.Tensor:
+        """True when a car is outside its own tile's world-frame bounding box.
+
+        Since env_spacing=0, every env's origin is world (0,0,0) but each env's
+        assigned tile sits at a different world offset inside the shared plane
+        (see track_cache.tile_origins_w). Checking against the global map width
+        would vastly overshoot — a car can be far off its own track but still
+        inside the big rectangle. We check against the per-tile bounds instead.
+
+        Args:
+        - poses_xy_w: (N, 2) world-meter car positions
+        - env_ids: (N,) int64 tile indices (env_id == tile_id by invariant)
+
+        Returns:
+        - (N,) bool — True if the car is outside its tile.
+        """
+        self._ensure_track_tensors(poses_xy_w.device)
+        origins = self._tile_origins_t[env_ids]   # (N, 2), world-meter tile centers
+        ext_x, ext_y = self.track_cache.tile_extent_m   # python floats (meters)
+        local = poses_xy_w - origins
+        x_out = local[..., 0].abs() > (0.5 * ext_x)
+        y_out = local[..., 1].abs() > (0.5 * ext_y)
+        return torch.logical_or(x_out, y_out)
 
     def generate_random_poses(self, num_poses: int, env_ids=None) -> list["InitialPoseCfg"]:
         """Sample spawn poses for a reset batch.

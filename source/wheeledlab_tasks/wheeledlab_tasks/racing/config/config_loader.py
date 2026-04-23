@@ -16,7 +16,7 @@ from functools import lru_cache
 ENV_VAR = "WHEELEDLAB_RACING_CONFIG"
 _DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "racing_config.yaml")
 _REQUIRED_SECTIONS = (
-    "run", "logging", "ppo", "policy", "env",
+    "run", "logging", "ppo", "policy", "env", "terrain",
     "rewards", "events", "observations",
 )
 

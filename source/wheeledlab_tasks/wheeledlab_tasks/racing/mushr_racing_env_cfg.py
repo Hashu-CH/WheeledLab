@@ -50,6 +50,7 @@ from .mdp import (
 )
 
 _ENV = CONFIG["env"]
+_TER = CONFIG["terrain"]
 
 
 # ---------------------------------------------------------------------------
@@ -77,17 +78,17 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     class_type: type = RacingTerrainImporter # runtime class to instantiate
 
     # Map generation parameters to make it realistic for how we test in real
-    row_spacing = 0.5
-    col_spacing = 0.5
+    row_spacing = float(_TER["row_spacing"])
+    col_spacing = float(_TER["col_spacing"])
     spacing = (row_spacing, col_spacing)
 
     # Sub-environments size to make it realistic for how we test in real
-    env_num_rows = 12
-    env_num_cols = 12
+    env_num_rows = int(_TER["env_num_rows"])
+    env_num_cols = int(_TER["env_num_cols"])
     env_size = (env_num_rows, env_num_cols)
 
     # Whether to sample colors
-    color_sampling = False
+    color_sampling = bool(_TER["color_sampling"])
 
     # Sizing + USD generation deferred to `configure()` so they can depend on num_envs.
     num_rows = 0
@@ -97,7 +98,7 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     height = 0.0
     file_name = ""
 
-    car_width_m: float = 0.28
+    car_width_m: float = float(_TER["car_width_m"])
 
     # usd setup
     prim_path = "/World/plane"

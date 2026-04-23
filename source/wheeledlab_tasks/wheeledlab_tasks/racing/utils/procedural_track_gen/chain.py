@@ -108,6 +108,8 @@ def build_chain(
     intensity_range: tuple[float, float],
     start_pos: np.ndarray = None,
     start_tan: np.ndarray = None,
+    margin_x: float = 0.0,
+    margin_y: float = 0.0,
 ) -> tuple[list[dict], list[dict]]:
     """
     concatenate random (unlocked) bezier features into tangent matched chain
@@ -115,6 +117,10 @@ def build_chain(
     Returns
     all_segments : list[dict]  — feed directly into build_polylines
     feature_log  : list[dict]  — for curriculum tracking / reward shaping
+
+    margin_x / margin_y shrink the usable tile rectangle — any new segment
+    that leaves [margin_x, cols - margin_x] x [margin_y, rows - margin_y] halts
+    the chain. Defaults 0.0 preserve the pre-margin behavior.
     """
     available = [f for f in FEATURE_ORDER if FEATURES[f]["unlock"] <= difficulty]
 
@@ -125,6 +131,9 @@ def build_chain(
     feature_log = []
     track_points = np.empty((0, 2))
 
+    x_min, x_max = margin_x, cols - margin_x
+    y_min, y_max = margin_y, rows - margin_y
+
     for _ in range(n_segments):
         feat_name = np.random.choice(available)
         intensity = np.random.uniform(*intensity_range)
@@ -134,10 +143,10 @@ def build_chain(
             feat_name, intensity, pos, tan, seg_len, track_points,
         )
 
-        # STOP loop if new points would go outside of environment
+        # STOP loop if new points would go outside of environment (minus margin)
         new_pts = np.array(build_polylines(segs))
-        if not np.all((0 <= new_pts[:, 0]) & (new_pts[:, 0] < cols)) or \
-           not np.all((0 <= new_pts[:, 1]) & (new_pts[:, 1] < rows)):
+        if not np.all((x_min <= new_pts[:, 0]) & (new_pts[:, 0] < x_max)) or \
+           not np.all((y_min <= new_pts[:, 1]) & (new_pts[:, 1] < y_max)):
             break
         if len(track_points) > 0:
             new_pts = new_pts[1:]  # skip shared end/start point

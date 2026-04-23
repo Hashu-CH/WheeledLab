@@ -31,6 +31,9 @@ import numpy as np
 from pxr import Usd, UsdGeom, UsdPhysics, Gf
 
 from .procedural_track_gen.curriculum import CurriculumConfig, generate_track
+from ..config import CONFIG
+
+_TER = CONFIG["terrain"]
 
 
 # ---------------------------------------------------------------------------
@@ -163,10 +166,13 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             start_row = i * env_num_rows
             start_col = j * env_num_cols
 
+            _diff_lo, _diff_hi = _TER["difficulty_range"]
             config = CurriculumConfig(
-                difficulty=np.random.uniform(.5, .90), 
-                steps_per_segment=30,
-                track_width=1,
+                difficulty=np.random.uniform(float(_diff_lo), float(_diff_hi)),
+                phase_boundary=float(_TER["phase_boundary"]),
+                steps_per_segment=int(_TER["steps_per_segment"]),
+                track_width=int(_TER["track_width_cells"]),
+                margin_frac=float(_TER["margin_frac"]),
             )
             config.resolve()  # resolve upfront so we can capture config.track_width per-tile
             grid, polyline = generate_track(env_size=env_size, config=config)
@@ -175,7 +181,6 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
                 start_col:start_col + env_num_cols,
             ] = grid
 
-            # TODO if polyline is rotated, swap poly cells
             # Convert tile-local cell-coord polyline -> world meters.
             poly_cells = np.asarray(polyline, dtype=np.float32)  # (M_tile, 2)
             world_x = (poly_cells[:, 0] + start_col - num_cols / 2.0) * row_spacing
