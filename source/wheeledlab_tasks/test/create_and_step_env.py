@@ -9,6 +9,10 @@ parser = argparse.ArgumentParser()
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli = parser.parse_args()
+# Racing + Visual tasks spawn a TiledCamera; Isaac Lab requires this flag to
+# initialize the RTX camera pipeline. Force it on so this script works for
+# camera-bearing tasks without the caller having to remember the flag.
+args_cli.enable_cameras = True
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -39,8 +43,21 @@ def _dump_camera_frame(env, path: str = "cam_sample.png") -> None:
     print(f"[cam dump] wrote {path} shape={tuple(rgb.shape)}")
 
 
-def main(task_name: str = "Isaac-MushrRacingRL-v0", num_envs: int = 16, num_steps: int = 1000):
+def main(task_name: str = "Isaac-MushrRacingRL-v0", num_envs: int = 4, num_steps: int = 20):
     env_cfg = parse_env_cfg(task_name, num_envs=num_envs)
+    # parse_env_cfg's num_envs kwarg can be swallowed by __post_init__ that
+    # builds the scene from its own default num_envs. Force both paths and
+    # re-run terrain.configure so the USD + track cache match the override.
+    env_cfg.num_envs = num_envs
+    if hasattr(env_cfg, "scene") and env_cfg.scene is not None:
+        env_cfg.scene.num_envs = num_envs
+        terrain = getattr(env_cfg.scene, "terrain", None)
+        if terrain is not None and hasattr(terrain, "configure"):
+            terrain.configure(num_envs)
+            # Re-sync ground plane size to the rebuilt terrain dims.
+            ground = getattr(env_cfg.scene, "ground", None)
+            if ground is not None and hasattr(ground.spawn, "size"):
+                ground.spawn.size = (terrain.width, terrain.height)
     env = gym.make(task_name, cfg=env_cfg)
 
     # reset environment
