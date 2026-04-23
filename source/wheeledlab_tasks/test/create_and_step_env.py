@@ -23,22 +23,45 @@ import gymnasium as gym
 
 import wheeledlab_tasks
 
-def main(task_name: str="Isaac-MushrDriftRL-v0", num_envs: int = 16, num_steps: int = 1000):
+
+def _dump_camera_frame(env, path: str = "cam_sample.png") -> None:
+    """Save env 0's first RGB sensor frame to disk so we can eyeball whether the
+    viewport's path-traced noise is also leaking into the policy's camera input.
+    Skip silently if the scene has no `camera` sensor."""
+    scene = env.unwrapped.scene
+    if "camera" not in scene.sensors:
+        return
+    rgb = scene["camera"].data.output["rgb"][0]  # (H, W, 3), uint8 or float
+    if rgb.dtype != torch.uint8:
+        rgb = (rgb.clamp(0.0, 1.0) * 255).to(torch.uint8)
+    from PIL import Image
+    Image.fromarray(rgb.cpu().numpy()).save(path)
+    print(f"[cam dump] wrote {path} shape={tuple(rgb.shape)}")
+
+
+def main(task_name: str = "Isaac-MushrRacingRL-v0", num_envs: int = 16, num_steps: int = 1000):
     env_cfg = parse_env_cfg(task_name, num_envs=num_envs)
     env = gym.make(task_name, cfg=env_cfg)
 
     # reset environment
     obs, _ = env.reset()
 
-    # simulate environment for num_steps steps
+    # Step a few times before dumping so the RTX renderer has produced a stable
+    # frame (first post-reset frame can be blank / pre-render).
     with torch.inference_mode():
-        for _ in range(num_steps):
-            # sample actions according to the defined space
+        for _ in range(5):
             actions = sample_space(
                 env.unwrapped.single_action_space, device=env.unwrapped.device, batch_size=num_envs
             )
-            # apply actions
-            transition = env.step(actions)
+            env.step(actions)
+        _dump_camera_frame(env)
+
+        for _ in range(num_steps):
+            actions = sample_space(
+                env.unwrapped.single_action_space, device=env.unwrapped.device, batch_size=num_envs
+            )
+            env.step(actions)
+
 
 if __name__ == "__main__":
     main()

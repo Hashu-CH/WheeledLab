@@ -160,6 +160,12 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MUSHR_SUS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     ground.init_state.pos = (0.0, 0.0, -1e-4)
 
+    # necessary?
+    light = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
+    )
+
     # TODO wire hyper parameters from file so that all hyper params are observable at once
     camera = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/mushr_nano/camera_link/camera",

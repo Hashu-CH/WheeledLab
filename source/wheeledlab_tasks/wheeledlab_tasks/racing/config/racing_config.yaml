@@ -24,7 +24,7 @@ terrain:
   car_width_m: 0.28         # used by cross-track penalty to define in-band width
   difficulty_range: [0, 1]  # sampled uniformly per tile
   phase_boundary: 0.0       # difficulty threshold from phase 0 to 1
-  track_width_cells: 1      # rasterized track width in grid cells (world meters ≈ cells * row_spacing)
+  track_width_cells: 2      # rasterized track width in grid cells (world meters ≈ cells * row_spacing)
   steps_per_segment: 30     # polyline resolution per segment
   margin_frac: 0.1         # inset from edge fraction of cols/rows
 
