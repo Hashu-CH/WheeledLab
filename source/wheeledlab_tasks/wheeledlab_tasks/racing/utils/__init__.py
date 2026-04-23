@@ -163,7 +163,11 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             start_row = i * env_num_rows
             start_col = j * env_num_cols
 
-            config = CurriculumConfig(difficulty=np.random.uniform(.10, .90), steps_per_segment=50)
+            config = CurriculumConfig(
+                difficulty=np.random.uniform(.5, .90), 
+                steps_per_segment=30,
+                track_width=1,
+            )
             config.resolve()  # resolve upfront so we can capture config.track_width per-tile
             grid, polyline = generate_track(env_size=env_size, config=config)
             traversability_hashmap[
@@ -239,7 +243,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
 # USD authoring
 # ---------------------------------------------------------------------------
 def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling=False):
-    """Create a USD file with a rasterised curriculum track plane.
+    """Create a USD file with a rasterised track plane.
 
     Returns the TrackCache for storage on RacingTerrainImporterCfg. 
     

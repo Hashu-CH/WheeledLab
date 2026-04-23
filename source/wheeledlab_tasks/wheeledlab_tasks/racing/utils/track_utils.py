@@ -113,6 +113,10 @@ def sample_poses_along_polylines(
     - car_width_m: chassis width (shrinks the lateral band).
     - margin_m: extra safety margin so car doesn't spawn at the band's edge.
     """
+  
+    if hasattr(env_ids, 'cpu'): # env ids is a cuda tensor -> convert to cpu for numpy
+      env_ids = env_ids.cpu()
+    env_ids_np = np.asarray(env_ids, dtype=np.int64)
     env_ids_np = np.asarray(env_ids, dtype=np.int64)
     num_poses = len(env_ids_np)
 

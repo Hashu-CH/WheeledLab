@@ -63,7 +63,7 @@ class CurriculumConfig:
         d = np.clip(self.difficulty, 0.0, 1.0)
 
         if self.track_width is None:
-            self.track_width = int(np.interp(d, [0, 1], [8, 3]))
+            self.track_width = int(np.interp(d, [0, 1], [5, 2]))
 
         if d < self.phase_boundary:
             dp = d / self.phase_boundary  # normalise within Phase 1

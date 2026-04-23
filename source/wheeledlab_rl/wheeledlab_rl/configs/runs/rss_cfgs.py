@@ -55,7 +55,7 @@ class RSS_ELEV_CONFIG(RslRlRunConfig):
 @configclass
 class RSS_RACING_CONFIG(RslRlRunConfig):
     env_setup = EnvSetup(
-        num_envs=64,
+        num_envs=512,
         task_name="Isaac-MushrRacingRL-v0"
     )
     train = RLTrainConfig(

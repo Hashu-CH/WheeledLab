@@ -191,7 +191,7 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
 @configclass
 class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
     seed: int = 42
-    num_envs: int = 1024
+    num_envs: int = 512 # default value, truth in rss config
     env_spacing: float = 0.
 
     events: RacingEventsCfg = RacingEventsRandomCfg()
@@ -207,7 +207,7 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
         self.viewer.lookat = [0.0, 0.0, -3.]
         self.sim.dt = 0.02 # physics sim timestep in seconds 50Hz = .02
         self.decimation = 10 # num .dt ticks per policy step 
-        self.episode_length_s = 10 # max episode length in seconds
+        self.episode_length_s = 20 # max episode length in seconds
         self.scene = MushrRacingSceneCfg(
             num_envs=self.num_envs, env_spacing=self.env_spacing,
         )

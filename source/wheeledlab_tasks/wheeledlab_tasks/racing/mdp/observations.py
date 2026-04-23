@@ -49,7 +49,7 @@ class RacingObsCfg:
         last_action = ObsTerm(
             func=mdp.last_action,
             clip=(-1., 1.),
-            noise=Unoise(-.1, .1),
+            noise=Unoise(n_min=-.1, n_max=.1),
         )
 
         def __post_init__(self) -> None:

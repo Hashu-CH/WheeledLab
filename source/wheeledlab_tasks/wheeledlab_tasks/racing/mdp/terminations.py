@@ -17,7 +17,7 @@ from isaaclab.utils import configclass
 # Termination Helpers
 # ---------------------------------------------------------------------------
 def out_of_map(env):
-    """Defines if a set of poses is outside of their respective envs"""
+    """Defines if a set of poses is outside of their respective tile (Way off track)"""
     poses = mdp.root_pos_w(env)[..., :2]
     terrain = env.scene[SceneEntityCfg("terrain").name]
     width = terrain.cfg.width
