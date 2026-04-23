@@ -21,6 +21,10 @@ import isaaclab.envs.mdp as mdp
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.utils import configclass
 
+from ..config import CONFIG
+
+_RW = CONFIG["rewards"]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -112,9 +116,12 @@ def cross_track_penalty(env, k_in: float = 1.0, k_out: float = 10.0):
 # ---------------------------------------------------------------------------
 @configclass
 class RacingRewardsCfg:
-    vel_rew = RewTerm(func=tangential_speed, weight=7.)
+    vel_rew = RewTerm(func=tangential_speed, weight=float(_RW["vel_rew_weight"]))
     cross_track_pen = RewTerm(
-        func=cross_track_penalty, 
-        weight=1.0, 
-        params={"k_in": 1.0, "k_out": 10.0}
+        func=cross_track_penalty,
+        weight=float(_RW["cross_track_pen_weight"]),
+        params={
+            "k_in": float(_RW["cross_track_k_in"]),
+            "k_out": float(_RW["cross_track_k_out"]),
+        },
     )

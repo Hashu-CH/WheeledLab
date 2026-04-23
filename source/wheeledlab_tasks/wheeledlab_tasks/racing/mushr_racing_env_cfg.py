@@ -38,6 +38,7 @@ from wheeledlab_assets import WHEELEDLAB_ASSETS_DATA_DIR
 from wheeledlab_assets.mushr import MUSHR_SUS_CFG
 from wheeledlab_tasks.common import Mushr4WDActionCfg
 
+from .config import CONFIG
 from .terrain import RacingTerrainImporter, stash_track_cache
 from .utils import create_track_geometry, compute_map_size
 from .mdp import (
@@ -47,6 +48,8 @@ from .mdp import (
     RacingRewardsCfg,
     RacingTerminationsCfg,
 )
+
+_ENV = CONFIG["env"]
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +193,7 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
 # ---------------------------------------------------------------------------
 @configclass
 class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
-    seed: int = 42
+    seed: int = _ENV["seed"]
     num_envs: int = 512 # default value, truth in rss config
     env_spacing: float = 0.
 
@@ -205,9 +208,9 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
         super().__post_init__()
         self.viewer.eye = [40., 0.0, 45.0]
         self.viewer.lookat = [0.0, 0.0, -3.]
-        self.sim.dt = 0.02 # physics sim timestep in seconds 50Hz = .02
-        self.decimation = 10 # num .dt ticks per policy step 
-        self.episode_length_s = 20 # max episode length in seconds
+        self.sim.dt = float(_ENV["sim_dt"])
+        self.decimation = int(_ENV["decimation"])
+        self.episode_length_s = float(_ENV["episode_length_s"])
         self.scene = MushrRacingSceneCfg(
             num_envs=self.num_envs, env_spacing=self.env_spacing,
         )

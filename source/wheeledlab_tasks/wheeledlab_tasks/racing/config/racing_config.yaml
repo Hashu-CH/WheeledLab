@@ -1,0 +1,87 @@
+# WheeledLab Racing — single source of truth for commonly-tuned hyperparameters.
+#
+# NOT INCLUDED: terrain layout (row/col spacing, env_num_rows/cols,
+# car_width_m, ground friction), camera intrinsics, Mushr4WDActionCfg kinematics.
+
+# Training Variables
+run:
+  num_envs: 512        # parallel envs (envs == num tracks)
+  num_iterations: 1000 # upper bouhd on total policy updates
+
+# Running Environment Variables 
+env:
+  seed: 42             # env RNG seed
+  episode_length_s: 20 # max episode length (seconds)
+  sim_dt: 0.02         # physics timestep (seconds)
+  decimation: 10       # physics steps per policy step
+
+# PPO Parameters
+ppo:
+  num_steps_per_env: 128              # rollout length before update
+  max_iterations: 4000                # runner cap (overridden by run.num_iterations)
+  save_interval: 50                   # save checkpoint interval
+  experiment_name: "ppo_mushr_racing" # folder/run name for checkpoints
+  empirical_normalization: false      # online obs mean/std normalization
+  algorithm:
+    value_loss_coef: 1.0              # value loss weight in total loss
+    use_clipped_value_loss: true      # PPO-style clipping on value loss
+    clip_param: 0.2                   # PPO policy ratio clip
+    entropy_coef: 0.005               # exploration bonus weight
+    num_learning_epochs: 5            # gradient passes over each rollout
+    num_mini_batches: 4               # mini-batches per epoch (inc for more freq updates)
+    learning_rate: 1.0e-3             # optimizer step size
+    schedule: "adaptive"              # learning rate to be dynamic
+    gamma: 0.99                       # reward discount factor
+    lam: 0.95                         # GAE smoothing factor
+    desired_kl: 0.01                  # KL target for adaptive LR
+    max_grad_norm: 1.0                # gradient-norm clip
+
+# Actor Policy Params
+policy:
+  init_noise_std: 1.0           # initial action noise stddev
+  actor_hidden_dims: [64, 64]   # policy MLP layer sizes
+  critic_hidden_dims: [64, 64]  # value MLP layer sizes
+  activation: "relu"            # MLP activation fn
+
+# Rewards
+rewards:
+  vel_rew_weight: 7.0          # weight on tangential-speed reward
+  cross_track_pen_weight: 1.0  # weight on cross-track penalty
+  cross_track_k_in: 1.0        # in-band quadratic penalty coef
+  cross_track_k_out: 10.0      # out-of-band quadratic penalty coef
+  low_speed_thresh: 0.3        # speed (m/s) below which low-speed penalty fires
+
+# Events
+events:
+  wheel_friction:
+    static_friction_range:  [0.4, 0.6]  # randomized wheel static friction range
+    dynamic_friction_range: [0.4, 0.6]  # randomized wheel dynamic friction range
+    restitution_range:      [0.0, 0.0]  # randomized wheel restitution range
+    num_buckets: 10                     # discrete friction buckets
+    make_consistent: false              # force consistent friction across wheels
+  base_mass_range:  [1.0, 3.0]          # randomized chassis mass range (kg)
+  wheel_mass_range: [0.01, 0.3]         # randomized wheel mass range (kg)
+
+# Observatinons
+observations:
+  enable_corruption: true          # apply domain randomization
+  concatenate_terms: true          # flatten obs dict into one vector
+  base_lin_vel_noise: [-0.1, 0.1]  # uniform noise bounds on linear velocity
+  base_ang_vel_noise: [-0.1, 0.1]  # uniform noise bounds on angular velocity
+  last_action_noise:  [-0.1, 0.1]  # uniform noise bounds on last-action obs
+  last_action_clip:   [-1.0, 1.0]  # clip range applied to last-action obs
+
+# Not really a reason to touch these
+logging:
+  video: true                      # record training videos
+  video_length: 500                # video length (steps)
+  video_interval: 15000            # steps between video recordings
+  video_resolution: [1280, 720]    # video width x height (px)
+  video_crf: 30                    # video compression quality (lower = better)
+  log_every: 10                    # log metrics every N updates
+  checkpoint_every: 1000           # save checkpoint every N env steps
+  no_checkpoints: false            # disable checkpoint saving
+  no_wandb: false                  # disable wandb logging
+  wandb_project: "WheeledLab"      # wandb project name
+  no_log: false                    # disable all logging
+  test_mode: false                 # disables logging, wandb, video, checkpoints

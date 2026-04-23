@@ -25,6 +25,11 @@ from isaaclab.utils import configclass
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.terrains import TerrainImporter
 
+from ..config import CONFIG
+
+_EV = CONFIG["events"]
+_WF = _EV["wheel_friction"]
+
 
 # ---------------------------------------------------------------------------
 # Reset Helper Functions
@@ -93,12 +98,12 @@ class RacingEventsRandomCfg(RacingEventsCfg):
         func=mdp.randomize_rigid_body_material,
         mode="startup",
         params={
-            "static_friction_range": (0.4, 0.6),
-            "dynamic_friction_range": (0.4, 0.6),
-            "restitution_range": (0.0, 0.0),
-            "num_buckets": 10,
+            "static_friction_range": tuple(_WF["static_friction_range"]),
+            "dynamic_friction_range": tuple(_WF["dynamic_friction_range"]),
+            "restitution_range": tuple(_WF["restitution_range"]),
+            "num_buckets": int(_WF["num_buckets"]),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
-            "make_consistent": False,
+            "make_consistent": bool(_WF["make_consistent"]),
         },
     )
 
@@ -107,7 +112,7 @@ class RacingEventsRandomCfg(RacingEventsCfg):
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=["base_link"]),
-            "mass_distribution_params": (1.0, 3.0),
+            "mass_distribution_params": tuple(_EV["base_mass_range"]),
             "operation": "abs",
         },
     )
@@ -117,7 +122,7 @@ class RacingEventsRandomCfg(RacingEventsCfg):
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
-            "mass_distribution_params": (.01, 0.3),
+            "mass_distribution_params": tuple(_EV["wheel_mass_range"]),
             "operation": "abs",
         },
     )
