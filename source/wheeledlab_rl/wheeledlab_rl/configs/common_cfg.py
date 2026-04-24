@@ -27,6 +27,13 @@ class LogConfig:
     model_save_dirname: str = "models"                  # Path to save the model under log_dir
     video_resolution: tuple[int, int] = (1280, 720)     # Resolution of the recorded video, Width x Height
     video_crf: int = 30                                 # Constant Rate Factor for video compression
+    # Policy-camera recorder: dumps the per-env tiled camera obs to wandb on the
+    # same trigger as the viewer video. Useful when the viewer perspective is too
+    # zoomed-out to see the agent (e.g. racing task with many envs).
+    log_policy_camera: bool = False                     # Enable PolicyCameraRecorder wrapper
+    policy_camera_sensor_name: str = "camera"           # Key in env.scene.sensors to read RGB from
+    policy_camera_env_id: int = 0                       # Which env's camera to record
+    policy_camera_fps: int = 10                         # Playback fps for the saved mp4
     run_name: str = f"run-{random.randint(0, 1e7)}"     # Name of the run
 
     @property

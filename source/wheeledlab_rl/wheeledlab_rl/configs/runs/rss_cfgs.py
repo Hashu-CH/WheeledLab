@@ -79,6 +79,10 @@ class RSS_RACING_CONFIG(RslRlRunConfig):
             wandb_project=_RACING_LOG["wandb_project"],
             no_log=_RACING_LOG["no_log"],
             test_mode=_RACING_LOG["test_mode"],
+            log_policy_camera=_RACING_LOG["log_policy_camera"],
+            policy_camera_sensor_name=_RACING_LOG["policy_camera_sensor_name"],
+            policy_camera_env_id=_RACING_LOG["policy_camera_env_id"],
+            policy_camera_fps=_RACING_LOG["policy_camera_fps"],
         ),
     )
     agent_setup = AgentSetup(
