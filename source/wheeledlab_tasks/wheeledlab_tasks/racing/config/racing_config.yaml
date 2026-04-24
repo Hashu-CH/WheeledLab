@@ -1,6 +1,6 @@
 # WheeledLab Racing — single source of truth for commonly-tuned hyperparameters.
 #
-# NOT INCLUDED: camera intrinsics, Mushr4WDActionCfg kinematics, ground friction.
+# NOT INCLUDED: terminatinos, camera intrinsics, Mushr4WDActionCfg kinematics, ground friction.
 
 # Training Variables
 run:
@@ -58,11 +58,13 @@ policy:
 
 # Rewards
 rewards:
-  vel_rew_weight: 7.0          # weight on tangential-speed reward
-  cross_track_pen_weight: 1.0  # weight on cross-track penalty
+  vel_rew_weight: .5     # weight on tangential-speed reward
+  cross_track_pen_weight: 0.3  # weight on cross-track penalty
   cross_track_k_in: 1.0        # in-band quadratic penalty coef
   cross_track_k_out: 10.0      # out-of-band quadratic penalty coef
   low_speed_thresh: 0.3        # speed (m/s) below which low-speed penalty fires
+  low_speed_weight: 0.2        # speed (m/s) below which low-speed penalty fires
+
 
 # Events
 events:

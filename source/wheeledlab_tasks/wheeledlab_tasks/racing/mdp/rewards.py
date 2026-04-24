@@ -125,3 +125,10 @@ class RacingRewardsCfg:
             "k_out": float(_RW["cross_track_k_out"]),
         },
     )
+    low_speed_pen = RewTerm(
+        func=low_speed_penalty,
+        weight=float(_RW["low_speed_weight"]),
+        params={
+            "low_speed_thresh": float(_RW["low_speed_thresh"]),
+        },
+    )

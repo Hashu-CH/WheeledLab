@@ -4,7 +4,8 @@
 #
 # Usage:
 #   ./play.sh <run-path> [extra play_policy.py args]
-#
+#   ./play.sh source/wheeledlab_rl/logs/run-<id>
+
 # Examples:
 #   ./play.sh logs/run-1234567
 #   ./play.sh logs/run-1234567 --steps 1000 --checkpoint 950

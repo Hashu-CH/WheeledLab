@@ -144,12 +144,29 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
 class MushrRacingSceneCfg(InteractiveSceneCfg):
     """Configuration for a Mushr car scene with a racetrack terrain and sensors.
 
-    No GroundPlaneCfg: the colored track plane (/World/colored_plane) carries
-    both the per-face track colors and its own MeshCollisionAPI, so a separate
-    ground plane is redundant and would z-fight with it.
+    The colored track plane (/World/colored_plane) is visuals-only — the
+    UsdPhysics.MeshCollisionAPI calls in racing/utils/__init__.py do NOT
+    actually enable collision (they need a paired UsdPhysics.CollisionAPI).
+    A GroundPlaneCfg supplies the actual collider, parked just below z=0
+    (-1e-4) so it physically backstops the cars without z-fighting the
+    colored mesh sitting at exactly z=0.
     """
     terrain = RacingTerrainImporterCfg()
+    ground = AssetBaseCfg(
+        prim_path="/World/base",
+        spawn=sim_utils.GroundPlaneCfg(
+            size=(1.0, 1.0),  # overwritten in __post_init__ once terrain is configured
+            color=(0, 0, 0),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="multiply",
+                restitution_combine_mode="multiply",
+                static_friction=2.0,
+                dynamic_friction=2.0,
+            ),
+        ),
+    )
     robot: ArticulationCfg = MUSHR_SUS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    ground.init_state.pos = (0.0, 0.0, -1e-4)
 
     # necessary?
     light = AssetBaseCfg(
@@ -182,6 +199,7 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.terrain.configure(self.num_envs) # inits track and cache
+        self.ground.spawn.size = (self.terrain.width, self.terrain.height)
         self.robot.init_state = self.robot.init_state.replace(pos=(0.0, 0.0, 0.0))
 
 
