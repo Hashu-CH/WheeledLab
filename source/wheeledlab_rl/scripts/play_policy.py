@@ -30,6 +30,16 @@ parser.add_argument("--video", action="store_true", help="Record video of the pl
 parser.add_argument("--log-dir", type=str, default="playback/",
                     help="Directory to save logs. If run path is provided, this is ignored.")
 parser.add_argument("--play-name", type=str, default="play-name", help="Name of the playback")
+parser.add_argument("--play-cfg", action="store_true",
+                    help="Use the registered play_env_cfg_entry_point (no rewards / no terminations) "
+                         "instead of the train env cfg. Useful for visual inspection.")
+parser.add_argument("--dump-camera", action="store_true",
+                    help="Dump the per-env tiled camera frames the policy consumes to mp4. "
+                         "Writes <play-name>-camera-rgb.mp4 (raw RGB) and "
+                         "<play-name>-camera-policy.mp4 (cropped + grayscale, the deterministic "
+                         "part of the policy obs — augmentations are skipped so frames are comparable).")
+parser.add_argument("--dump-camera-env-id", type=int, default=0,
+                    help="Which env's camera to dump when --dump-camera is set (default: 0).")
 
 simulation_app, args_cli = startup(parser=parser)
 ### Extract task_name and agent_cfg from run_config.pkl ###
@@ -86,6 +96,18 @@ else:
     policy_resume_path = args_cli.policy_path
 
 
+# Optionally swap to the play env cfg before Hydra resolves it.
+# Hydra reads `env_cfg_entry_point` from the gym registry at main() call time,
+# so we can repoint the spec's kwargs in-place here.
+if args_cli.play_cfg:
+    spec = gym.spec(task)
+    if "play_env_cfg_entry_point" in spec.kwargs:
+        spec.kwargs["env_cfg_entry_point"] = spec.kwargs["play_env_cfg_entry_point"]
+        print(f"[INFO] --play-cfg: using play_env_cfg_entry_point for {task}.")
+    else:
+        print(f"[WARN] --play-cfg: no play_env_cfg_entry_point registered for {task}; using train cfg.")
+
+
 @hydra_task_config(task, agent_entry_point)
 def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg): # TODO: Add SB3 config support
 
@@ -135,6 +157,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg): # TODO: Add SB3 config suppo
         'actions': [],
     }
 
+    # Optional per-env tiled-camera frame capture (used by --dump-camera).
+    # Stored as lists of CPU uint8 tensors so the GPU isn't holding playback
+    # buffers across steps.
+    cam_frames_rgb: list[torch.Tensor] = []   # each (H, W, 3) uint8
+    cam_frames_policy: list[torch.Tensor] = []  # each (H', W) uint8 grayscale
+    if args_cli.dump_camera:
+        cam_sensor = env.unwrapped.scene.sensors["camera"]
+        cam_env_id = args_cli.dump_camera_env_id
+        print(f"[INFO] Will dump tiled camera frames for env {cam_env_id}.")
+
     ### PLAY POLICY ###
 
     # reset environment
@@ -151,6 +183,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg): # TODO: Add SB3 config suppo
         data['observations'].append(obs)
         data['actions'].append(actions)
 
+        if args_cli.dump_camera:
+            # Mirror the deterministic part of camera_data_rgb_flattened_aug:
+            # crop top 1/3 (sky) + grayscale. Skip color jitter / blur / norm
+            # so successive frames are visually comparable.
+            rgb = cam_sensor.data.output["rgb"][cam_env_id].detach().cpu()  # (H, W, 3) uint8
+            cam_frames_rgb.append(rgb)
+            H = rgb.shape[0]
+            cropped = rgb[H // 3:].float() / 255.0          # (H', W, 3)
+            chw = cropped.permute(2, 0, 1)                  # (3, H', W)
+            # ITU-R BT.601 luma weights — same as torchvision.transforms.Grayscale.
+            gray = (0.2989 * chw[0] + 0.5870 * chw[1] + 0.1140 * chw[2])  # (H', W)
+            cam_frames_policy.append((gray * 255.0).clamp(0, 255).byte())
+
     ###
 
     ########################
@@ -163,6 +208,25 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg): # TODO: Add SB3 config suppo
         save_path = os.path.join(playback_dir, f"{args_cli.play_name}-rollouts.pt")
         torch.save(data, save_path)
         print(f"[INFO] Saved episode data to: {save_path}")
+
+    if args_cli.dump_camera and len(cam_frames_rgb) > 0:
+        # imageio + ffmpeg backend is already pulled in by gym.wrappers.RecordVideo.
+        import imageio.v2 as imageio
+        # Frame rate = policy step rate = 1 / (sim.dt * decimation).
+        sim_cfg = env.unwrapped.cfg.sim
+        dec = env.unwrapped.cfg.decimation
+        fps = max(1, int(round(1.0 / (sim_cfg.dt * dec))))
+
+        rgb_path = os.path.join(playback_dir, f"{args_cli.play_name}-camera-rgb.mp4")
+        rgb_arr = torch.stack(cam_frames_rgb, dim=0).numpy()    # (T, H, W, 3) uint8
+        imageio.mimsave(rgb_path, rgb_arr, fps=fps, codec="libx264")
+        print(f"[INFO] Saved raw camera RGB to: {rgb_path}  ({rgb_arr.shape}, {fps} fps)")
+
+        policy_path = os.path.join(playback_dir, f"{args_cli.play_name}-camera-policy.mp4")
+        gray_arr = torch.stack(cam_frames_policy, dim=0)        # (T, H', W) uint8
+        gray_rgb = gray_arr.unsqueeze(-1).expand(-1, -1, -1, 3).contiguous().numpy()  # mp4 wants 3-ch
+        imageio.mimsave(policy_path, gray_rgb, fps=fps, codec="libx264")
+        print(f"[INFO] Saved policy-view (cropped+gray) to: {policy_path}  ({gray_arr.shape}, {fps} fps)")
 
     print("Done playing policy. Closing environment.")
     env.close()
