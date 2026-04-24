@@ -4,7 +4,7 @@
 
 # Training Variables
 run:
-  num_envs: 512        # parallel envs (envs == num tracks)
+  num_envs: 128        # parallel envs (envs == num tracks)
   num_iterations: 1000 # upper bouhd on total policy updates
 
 # Running Environment Variables

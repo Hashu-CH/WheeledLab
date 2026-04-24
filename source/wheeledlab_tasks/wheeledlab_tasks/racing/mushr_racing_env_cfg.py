@@ -221,8 +221,8 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.viewer.eye = [40., 0.0, 45.0]
-        self.viewer.lookat = [0.0, 0.0, -3.]
+        self.viewer.eye = [0., -10., 8.]
+        self.viewer.lookat = [0.0, 0.0, 0.0]
         self.sim.dt = float(_ENV["sim_dt"])
         self.decimation = int(_ENV["decimation"])
         self.episode_length_s = float(_ENV["episode_length_s"])
