@@ -132,3 +132,9 @@ class RacingRewardsCfg:
             "low_speed_thresh": float(_RW["low_speed_thresh"]),
         },
     )
+
+    out_of_tile_pen = RewTerm(
+        func=mdp.rewards.is_terminated_term,
+        weight=float(_RW["out_of_tile_pen_weight"]),
+        params={"term_keys": "out_range"},
+    )
