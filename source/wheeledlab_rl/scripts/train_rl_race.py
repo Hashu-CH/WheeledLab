@@ -5,7 +5,7 @@
 from wheeledlab_rl.startup import startup
 import argparse
 parser = argparse.ArgumentParser(description="Train an RL Agent in WheeledLab (racing; dumps one terrain cam frame to wandb).")
-parser.add_argument('-r', "--run-config-name", type=str, default="RSS_DRIFT_CONFIG", help="Run in headless mode.")
+parser.add_argument('-r', "--run-config-name", type=str, default="RSS_RACING_CONFIG", help="Run config name (must be registered in wheeledlab_rl.configs.runs).")
 simulation_app, args_cli = startup(parser=parser)
 
 #######################
@@ -18,7 +18,6 @@ import torch
 
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml, dump_pickle
-from isaaclab.envs.utils.spaces import sample_space
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 
@@ -33,12 +32,13 @@ from wheeledlab_rl.utils import (
 )
 
 
-def _dump_terrain_cam_to_wandb(env, num_envs: int) -> None:
+def _dump_terrain_cam_to_wandb(env, num_envs: int, action_dim: int = 2, settle_steps: int = 10) -> None:
     """Grab a single RGB frame from env 0's on-robot camera and log it to wandb.
 
     Used to verify that the terrain render the policy actually sees is clean,
-    independent of whatever the Isaac Sim viewport is showing. Steps the raw
-    gym env a few times first so the RTX pipeline has produced a stable frame.
+    independent of whatever the Isaac Sim viewport is showing. Mirrors the
+    settle pattern from test_terrain.py: reset, step a forward action a few
+    times so RTX/physics produce a stable frame, then read the sensor buffer.
     """
     import wandb
     scene = env.unwrapped.scene
@@ -46,14 +46,13 @@ def _dump_terrain_cam_to_wandb(env, num_envs: int) -> None:
         print("[WARN] No 'camera' sensor on scene — skipping terrain cam dump.")
         return
 
+    device = env.unwrapped.device
+    actions = torch.zeros((num_envs, action_dim), device=device)
+    actions[:, 0] = 0.5  # gentle forward throttle so the car isn't stationary
+
     env.reset()
     with torch.inference_mode():
-        for _ in range(3):
-            actions = sample_space(
-                env.unwrapped.single_action_space,
-                device=env.unwrapped.device,
-                batch_size=num_envs,
-            )
+        for _ in range(settle_steps):
             env.step(actions)
 
     rgb = scene["camera"].data.output["rgb"][0]  # (H, W, 3)

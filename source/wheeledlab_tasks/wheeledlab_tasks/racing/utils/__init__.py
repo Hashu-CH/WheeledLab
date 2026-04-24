@@ -107,8 +107,10 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     row_spacing, col_spacing = spacing
     env_num_rows, env_num_cols = env_size
 
-    width = num_rows * row_spacing
-    height = num_cols * col_spacing
+    # Convention: col -> x, row -> y. Matches the racing_config.yaml comments
+    # ("world tile width = env_num_cols * col_spacing", etc.).
+    width = num_cols * col_spacing   # x-extent
+    height = num_rows * row_spacing  # y-extent
 
     if num_rows % env_num_rows != 0 or num_cols % env_num_cols != 0:
         raise ValueError("Map size must be a multiple of the sub environment size.")
@@ -116,10 +118,12 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     num_env_rows = num_rows // env_num_rows
     num_env_cols = num_cols // env_num_cols
 
-    xs = np.linspace(-width / 2, width / 2, num_rows) - row_spacing / 2
-    ys = np.linspace(-height / 2, height / 2, num_cols) - col_spacing / 2
-    xx, yy = np.meshgrid(xs, ys)
+    xs = np.linspace(-width / 2, width / 2, num_cols) - col_spacing / 2
+    ys = np.linspace(-height / 2, height / 2, num_rows) - row_spacing / 2
+    xx, yy = np.meshgrid(xs, ys)  # default 'xy' indexing -> shape (num_rows, num_cols)
 
+    # ravel is row-major over (num_rows, num_cols), so vertex index
+    # k = row_index * num_cols + col_index. This stride matches the face loop below.
     vertices = [(x, y, 0) for x, y in zip(xx.ravel(), yy.ravel())]
 
     def color_sampler(r, g, b, range):
@@ -182,9 +186,10 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             ] = grid
 
             # Convert tile-local cell-coord polyline -> world meters.
+            # poly_cells[:, 0] is the col-direction (x), poly_cells[:, 1] is the row-direction (y).
             poly_cells = np.asarray(polyline, dtype=np.float32)  # (M_tile, 2)
-            world_x = (poly_cells[:, 0] + start_col - num_cols / 2.0) * row_spacing
-            world_y = (poly_cells[:, 1] + start_row - num_rows / 2.0) * col_spacing
+            world_x = (poly_cells[:, 0] + start_col - num_cols / 2.0) * col_spacing
+            world_y = (poly_cells[:, 1] + start_row - num_rows / 2.0) * row_spacing
             tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
 
             # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
@@ -196,8 +201,8 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             # mushr_racing_env_cfg.py about env-local observations.
             tile_center_col = start_col + env_num_cols / 2.0
             tile_center_row = start_row + env_num_rows / 2.0
-            tile_origins_w[tile_idx, 0] = (tile_center_col - num_cols / 2.0) * row_spacing
-            tile_origins_w[tile_idx, 1] = (tile_center_row - num_rows / 2.0) * col_spacing
+            tile_origins_w[tile_idx, 0] = (tile_center_col - num_cols / 2.0) * col_spacing
+            tile_origins_w[tile_idx, 1] = (tile_center_row - num_rows / 2.0) * row_spacing
 
             # Cell bounds: used by per-env spawn restriction.
             tile_cell_bounds[tile_idx] = (
@@ -227,7 +232,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
         segment_valid=segment_valid,
         track_widths_m=np.asarray(tile_track_widths_m, dtype=np.float32),
         tile_origins_w=tile_origins_w,
-        tile_extent_m=(env_num_rows * row_spacing, env_num_cols * col_spacing),
+        tile_extent_m=(env_num_cols * col_spacing, env_num_rows * row_spacing),
         tile_cell_bounds=tile_cell_bounds,
     )
 

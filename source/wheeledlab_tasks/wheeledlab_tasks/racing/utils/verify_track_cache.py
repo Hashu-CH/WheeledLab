@@ -37,13 +37,12 @@ def visualize_track_cache(
         poly_w = track_cache.polylines_w[k]
         valid_pts = ~np.isnan(poly_w).any(axis=-1)
         poly_w = poly_w[valid_pts]
-        # num_cols = total-map cells; we just need to map back to the tile frame.
-        # cell_x = world_x / row_spacing + num_cols/2 - c0 -- but num_cols cancels
-        # against the tile origin offset, so we can express this using only the
-        # tile-local quantity: world_x - tile_origin_x in the same units.
+        # Inverse of the world-coord transform: col -> x uses col_spacing,
+        # row -> y uses row_spacing. num_cols cancels against the tile origin
+        # offset, so we use only the tile-local quantity: world_x - tile_origin_x.
         tile_origin = track_cache.tile_origins_w[k]
-        poly_cell_x = (poly_w[:, 0] - tile_origin[0]) / row_spacing + env_num_cols / 2.0
-        poly_cell_y = (poly_w[:, 1] - tile_origin[1]) / col_spacing + env_num_rows / 2.0
+        poly_cell_x = (poly_w[:, 0] - tile_origin[0]) / col_spacing + env_num_cols / 2.0
+        poly_cell_y = (poly_w[:, 1] - tile_origin[1]) / row_spacing + env_num_rows / 2.0
         ax.plot(poly_cell_x, poly_cell_y, color="red", linewidth=1.0)
 
         # Tangent arrows sampled every 10th vertex.

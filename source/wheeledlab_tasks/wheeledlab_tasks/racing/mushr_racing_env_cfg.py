@@ -124,8 +124,8 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
         """
         self.num_rows, self.num_cols = compute_map_size(num_envs, self.env_size)
         self.map_size = (self.num_rows, self.num_cols)
-        self.width = self.num_rows * self.row_spacing
-        self.height = self.num_cols * self.col_spacing
+        self.width = self.num_cols * self.col_spacing   # x-extent
+        self.height = self.num_rows * self.row_spacing  # y-extent
         self.file_name = os.path.join(
             WHEELEDLAB_ASSETS_DATA_DIR, 'rgb_maps', time.strftime("%Y%m%d_%H%M%S.usd"),
         )
@@ -142,23 +142,14 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
 # ---------------------------------------------------------------------------
 @configclass
 class MushrRacingSceneCfg(InteractiveSceneCfg):
-    """Configuration for a Mushr car scene with a racetrack terrain and sensors."""
+    """Configuration for a Mushr car scene with a racetrack terrain and sensors.
+
+    No GroundPlaneCfg: the colored track plane (/World/colored_plane) carries
+    both the per-face track colors and its own MeshCollisionAPI, so a separate
+    ground plane is redundant and would z-fight with it.
+    """
     terrain = RacingTerrainImporterCfg()
-    ground = AssetBaseCfg(
-        prim_path="/World/base",
-        spawn=sim_utils.GroundPlaneCfg(
-            size=(1.0, 1.0),  # overwritten in __post_init__ once terrain is configured
-            color=(0, 0, 0),
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="multiply",
-                restitution_combine_mode="multiply",
-                static_friction=2.0,
-                dynamic_friction=2.0,
-            ),
-        ),
-    )
     robot: ArticulationCfg = MUSHR_SUS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-    ground.init_state.pos = (0.0, 0.0, -1e-4)
 
     # necessary?
     light = AssetBaseCfg(
@@ -191,7 +182,6 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.terrain.configure(self.num_envs) # inits track and cache
-        self.ground.spawn.size = (self.terrain.width, self.terrain.height)
         self.robot.init_state = self.robot.init_state.replace(pos=(0.0, 0.0, 0.0))
 
 
