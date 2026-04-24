@@ -100,3 +100,9 @@ logging:
   wandb_project: "WheeledLab"      # wandb project name
   no_log: false                    # disable all logging
   test_mode: false                 # disables logging, wandb, video, checkpoints
+  # Per-env tiled camera obs recorder. Fires on the same step_trigger as the
+  # viewer video; useful when the viewer is too zoomed-out to see the agent.
+  log_policy_camera: true          # dump tiled camera frames to wandb under "PolicyCamera"
+  policy_camera_sensor_name: "camera"  # key in env.scene.sensors to read RGB from
+  policy_camera_env_id: 0          # which env's camera to record
+  policy_camera_fps: 5             # playback fps (5 = real-time at sim_dt*decimation = 0.2s)

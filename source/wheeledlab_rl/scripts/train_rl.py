@@ -26,6 +26,7 @@ from wheeledlab_rl import WHEELEDLAB_RL_LOGS_DIR
 from wheeledlab_rl.utils import (
     OnPolicyRunner as ModifiedRslRunner,
     CustomRecordVideo,
+    PolicyCameraRecorder,
     hydra_run_config,
     ClipAction,
 )
@@ -92,6 +93,24 @@ def main(run_cfg: RunConfig): # TODO: Add SB3 config support
         print("[INFO] Recording videos during training.")
         print_dict(video_kwargs, nesting=4)
         env = CustomRecordVideo(env, **video_kwargs)
+
+    # Optional: dump the per-env tiled camera obs to wandb on the same trigger
+    # as the viewer video. Useful when the viewer perspective is too zoomed-out
+    # to see individual agents (e.g. racing with many envs on a large plane).
+    if log_cfg.video and log_cfg.log_policy_camera:
+        policy_cam_kwargs = {
+            "video_folder": os.path.join(log_cfg.run_log_dir, "policy_camera"),
+            "sensor_name": log_cfg.policy_camera_sensor_name,
+            "env_id": log_cfg.policy_camera_env_id,
+            "step_trigger": lambda step: step % log_cfg.video_interval == 0,
+            "video_length": log_cfg.video_length,
+            "fps": log_cfg.policy_camera_fps,
+            "enable_wandb": not log_cfg.no_wandb,
+            "video_crf": log_cfg.video_crf,
+        }
+        print("[INFO] Recording policy camera observations during training.")
+        print_dict(policy_cam_kwargs, nesting=4)
+        env = PolicyCameraRecorder(env, **policy_cam_kwargs)
 
     # TODO: add back support for SB3
     env = RslRlVecEnvWrapper(env)
