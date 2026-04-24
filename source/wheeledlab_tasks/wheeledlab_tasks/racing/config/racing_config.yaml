@@ -4,7 +4,7 @@
 
 # Training Variables
 run:
-  num_envs: 128        # parallel envs (envs == num tracks)
+  num_envs: 512        # parallel envs (envs == num tracks)
   num_iterations: 1000 # upper bouhd on total policy updates
 
 # Running Environment Variables
@@ -39,7 +39,7 @@ ppo:
     value_loss_coef: 1.0              # value loss weight in total loss
     use_clipped_value_loss: true      # PPO-style clipping on value loss
     clip_param: 0.2                   # PPO policy ratio clip
-    entropy_coef: 0.005               # exploration bonus weight
+    entropy_coef: 0.01               # exploration bonus weight
     num_learning_epochs: 5            # gradient passes over each rollout
     num_mini_batches: 4               # mini-batches per epoch (inc for more freq updates)
     learning_rate: 1.0e-3             # optimizer step size
@@ -58,12 +58,13 @@ policy:
 
 # Rewards
 rewards:
-  vel_rew_weight: .5     # weight on tangential-speed reward
+  vel_rew_weight: 1.5     # weight on tangential-speed reward
   cross_track_pen_weight: 0.3  # weight on cross-track penalty
   cross_track_k_in: 1.0        # in-band quadratic penalty coef
-  cross_track_k_out: 10.0      # out-of-band quadratic penalty coef
+  cross_track_k_out: 5.0       # out-of-band quadratic penalty coef (less cliff-like than 10)
   low_speed_thresh: 0.3        # speed (m/s) below which low-speed penalty fires
-  low_speed_weight: 0.2        # speed (m/s) below which low-speed penalty fires
+  low_speed_weight: -0.2       # negative weight: term returns +1 when slow, so weight must be -ve to penalize
+  out_of_tile_pen_weight: -10.0  # one-shot penalty when out_range termination fires
 
 
 # Events
