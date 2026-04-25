@@ -124,7 +124,7 @@ class PolicyCameraRecorder(gym.Wrapper):
         output.close()
 
         if self.enable_wandb:
-            wandb.log({self.wandb_key: wandb.Video(path)}, commit=False)
+            wandb.log({self.wandb_key: wandb.Video(path)}, step=self._step_count, commit=True)
 
         self._frames = []
         self._recording = False
@@ -134,6 +134,9 @@ class PolicyCameraRecorder(gym.Wrapper):
     # gym.Wrapper hooks
     # ------------------------------------------------------------------
     def step(self, action):
+        if not self._recording and self.step_trigger(self._step_count):
+            self._start_recording()
+
         result = self.env.step(action)
         self._step_count += 1
 
@@ -143,11 +146,6 @@ class PolicyCameraRecorder(gym.Wrapper):
                 self._frames.append(frame)
             if len(self._frames) >= self.video_length:
                 self._save_and_log()
-        elif self.step_trigger(self._step_count):
-            self._start_recording()
-            frame = self._capture_frame()
-            if frame is not None:
-                self._frames.append(frame)
 
         return result
 
