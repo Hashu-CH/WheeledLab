@@ -19,6 +19,14 @@ import torch
 from collections import deque
 
 
+# TODO: any update to rsl_rl version will break this
+# version 2.3.3 of rsl_rl uses eval(policy_cfg (w/o classname))
+# so new actorCriticCNNGRU must be in the current modules globals
+from rsl_rl.runners import on_policy_runner as curr_module
+from .actor_critic_cnn_gru import ActorCriticCNNGRU
+curr_module.ActorCriticCNNGRU = ActorCriticCNNGRU
+
+
 class OnPolicyRunner(runners.OnPolicyRunner):
     """Override for logging purposes"""
 

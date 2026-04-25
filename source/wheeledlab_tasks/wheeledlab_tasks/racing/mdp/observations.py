@@ -65,4 +65,3 @@ class RacingObsCfg:
             self.concatenate_terms = bool(_OBS["concatenate_terms"])
 
     policy: PolicyCfg = PolicyCfg() # policy group term 
-    # can also implement assym actor-critic with a critic: attribute

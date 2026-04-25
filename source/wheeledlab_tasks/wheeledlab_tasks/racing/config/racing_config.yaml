@@ -49,12 +49,28 @@ ppo:
     desired_kl: 0.01                  # KL target for adaptive LR
     max_grad_norm: 1.0                # gradient-norm clip
 
-# Actor Policy Params
+# Actor Policy Params (CNN + GRU + MLP architecture)
+# obs layout: [camera_flat (C*H*W), base_lin_vel (3), base_ang_vel (3), last_action (2)]
+#   -> split into (image, proprio) inside ActorCriticCNNGRU._encode
+#   -> CNN(image) ++ proprio  ->  GRU  ->  MLP actor/critic heads
 policy:
-  init_noise_std: 1.0           # initial action noise stddev
-  actor_hidden_dims: [64, 64]   # policy MLP layer sizes
-  critic_hidden_dims: [64, 64]  # value MLP layer sizes
-  activation: "relu"            # MLP activation fn
+  class_name: "ActorCriticCNNGRU"  # resolved by rsl_rl runner via eval(); see modified_rsl_rl_runner.py
+  init_noise_std: 0.5              # initial action noise stddev
+  activation: "relu"               # activation fn shared by CNN / GRU input / MLP heads
+  actor_hidden_dims: [64, 64]      # MLP layer sizes on top of the GRU hidden
+  critic_hidden_dims: [64, 64]
+  # CNN frontend — reshapes the flattened camera obs back to (C, H, W).
+  # Must match camera_data_rgb_flattened_aug's output:
+  #   raw 60x80 RGB -> crop top 1/3 -> 40x80 -> grayscale -> 1x40x80 -> flatten
+  image_shape: [1, 40, 80]         # (C, H, W)
+  cnn_channels: [16, 32]           # out channels per conv block
+  cnn_kernel_sizes: [5, 3]
+  cnn_strides: [2, 2]
+  cnn_out_dim: 64                  # projection dim after conv flatten
+  # GRU temporal encoder between CNN features and MLP heads.
+  rnn_type: "gru"                  # "gru" | "lstm"
+  rnn_hidden_dim: 128              # rsl_rl 2.3+ name (was rnn_hidden_size)
+  rnn_num_layers: 1
 
 # Rewards
 rewards:
