@@ -111,18 +111,68 @@ def cross_track_penalty(env, k_in: float = 1.0, k_out: float = 10.0):
     return -(k_in * d * d + k_out * extra * extra)
 
 
+def chassis_off_track_penalty(env, k: float = 5.0, car_half_length_m: float = 0.21):
+    """Penalize any chassis corner leaving the track boundary.
+
+    pen is sum of squared overshot distances off track.
+
+    Corner positions are computed from root pose + yaw rotation applied to the
+    four (±half_length, ±half_width) offsets in the chassis local frame.
+    half_width is derived from terrain.cfg.car_width_m.
+    """
+
+    # this is kinda like _project for 4 points on the mushr
+    N = env.num_envs
+    device = env.device
+
+    # extract yaw components from quaternion
+    pos_xy = mdp.root_pos_w(env)[..., :2]
+    quat = mdp.root_quat_w(env)
+    w, x, y, z = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    cos_y, sin_y = torch.cos(yaw), torch.sin(yaw)   # (N,)
+
+
+    hl = car_half_length_m
+    hw = env.scene.terrain.cfg.car_width_m * 0.5
+
+    # 4 corners in chassis-local frame
+    lx = torch.tensor([ hl,  hl, -hl, -hl], device=device)
+    ly = torch.tensor([ hw, -hw,  hw, -hw], device=device)
+
+    # expand rotation matrix of yaw comp to convert chassic frame to world frame
+    wx = cos_y.unsqueeze(0) * lx.unsqueeze(1) - sin_y.unsqueeze(0) * ly.unsqueeze(1)
+    wy = sin_y.unsqueeze(0) * lx.unsqueeze(1) + cos_y.unsqueeze(0) * ly.unsqueeze(1)
+
+    # convert chassic local - world axis coordinates to pure world coordinates
+    corners = torch.stack([
+        # (4, N), (4,N) =? (4,n,2) then rehsape to (4n, 2)
+        pos_xy[:, 0].unsqueeze(0) + wx, 
+        pos_xy[:, 1].unsqueeze(0) + wy,
+    ], dim=-1).reshape(-1, 2)
+
+    # project to centerline track cache 
+    env_ids = torch.arange(N, device=device, dtype=torch.long).unsqueeze(0).expand(4, -1).reshape(-1)
+    d_signed, _, track_width = env.scene.terrain.project_to_centerline(corners, env_ids)
+
+    # diff calc - how far past track_half_width (4, N)
+    overshoot = (d_signed.abs() - track_width * 0.5).clamp_min(0.0).reshape(4, N)
+
+    return k * overshoot.pow(2).sum(dim=0)
+
+
 # ---------------------------------------------------------------------------
 # Reward manager config
 # ---------------------------------------------------------------------------
 @configclass
 class RacingRewardsCfg:
     vel_rew = RewTerm(func=tangential_speed, weight=float(_RW["vel_rew_weight"]))
-    cross_track_pen = RewTerm(
-        func=cross_track_penalty,
-        weight=float(_RW["cross_track_pen_weight"]),
+    chassis_off_track_pen = RewTerm(
+        func=chassis_off_track_penalty,
+        weight=float(_RW["chassis_off_track_pen_weight"]),
         params={
-            "k_in": float(_RW["cross_track_k_in"]),
-            "k_out": float(_RW["cross_track_k_out"]),
+            "k": float(_RW["chassis_off_track_k"]),
+            "car_half_length_m": float(_RW["car_half_length_m"]),
         },
     )
     low_speed_pen = RewTerm(
@@ -133,6 +183,7 @@ class RacingRewardsCfg:
         },
     )
 
+    # Large termination penalty
     out_of_tile_pen = RewTerm(
         func=mdp.rewards.is_terminated_term,
         weight=float(_RW["out_of_tile_pen_weight"]),

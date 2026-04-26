@@ -16,17 +16,20 @@ env:
 
 # Terrain Layout — tile sizing + per-tile procedural track generation.
 terrain:
-  env_num_rows: 25          # cells per tile (rows)
-  env_num_cols: 25          # cells per tile (cols)
-  row_spacing: 0.5          # meters per cell (rows); world tile height = env_num_rows * row_spacing
-  col_spacing: 0.5          # meters per cell (cols); world tile width  = env_num_cols * col_spacing
+  env_num_rows: 50          # cells per tile (rows)
+  env_num_cols: 50          # cells per tile (cols)
+  row_spacing: 0.25         # meters per cell (rows); world tile height = env_num_rows * row_spacing
+  col_spacing: 0.25         # meters per cell (cols); world tile width  = env_num_cols * col_spacing
   color_sampling: false     # jitter tile colors for visual diversity
   car_width_m: 0.28         # used by cross-track penalty to define in-band width
   difficulty_range: [0, 1]  # sampled uniformly per tile
   phase_boundary: 0.0       # difficulty threshold from phase 0 to 1
-  track_width_cells: 2      # rasterized track width in grid cells (world meters ≈ cells * row_spacing)
+  track_width_cells: 6      # rasterized track width in grid cells (world meters ≈ cells * row_spacing)
   steps_per_segment: 30     # polyline resolution per segment
   margin_frac: 0.1         # inset from edge fraction of cols/rows
+# if you want higher resolution tracks:
+# increase env_nums and decrease row_spacing proportionally
+# also increase track_width cells prop to row_spacing to maintian actual width
 
 # PPO Parameters
 ppo:
@@ -73,11 +76,21 @@ policy:
   rnn_num_layers: 1
 
 # Rewards
+# for consistency all rewards return positive values 
+# meaning weights for penalties must be negative
 rewards:
   vel_rew_weight: 1.5     # weight on tangential-speed reward
-  cross_track_pen_weight: 0.3  # weight on cross-track penalty
-  cross_track_k_in: 1.0        # in-band quadratic penalty coef
-  cross_track_k_out: 5.0       # out-of-band quadratic penalty coef (less cliff-like than 10)
+
+  # chassic corners. Penalizes any corner being off track (track width < dist)
+  chassis_off_track_pen_weight: -1.0
+  chassis_off_track_k: 5.0           # distance scaling factor for penalty
+  car_half_length_m: 0.21 # derived from scenec cfg (dont change)
+
+  # Cross-track penalty (not currently used())
+  # cross_track_pen_weight: 0.3
+  # cross_track_k_in: 1.0
+  # cross_track_k_out: 5.0
+
   low_speed_thresh: 0.3        # speed (m/s) below which low-speed penalty fires
   low_speed_weight: -0.2       # negative weight: term returns +1 when slow, so weight must be -ve to penalize
   out_of_tile_pen_weight: -10.0  # one-shot penalty when out_range termination fires
