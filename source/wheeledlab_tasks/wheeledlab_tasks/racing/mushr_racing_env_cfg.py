@@ -24,6 +24,7 @@ Warning:
 
 import os
 import time
+import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 import isaaclab.sim as sim_utils
@@ -55,6 +56,12 @@ from .mdp import (
 
 _ENV = CONFIG["env"]
 _TER = CONFIG["terrain"]
+
+# Seed the global numpy RNG used by track generation (procedural/, generator.py,
+# projection.py). Isaac Lab's seed wiring runs after the env is constructed,
+# which is too late — terrain.configure() runs during scene __post_init__.
+# Pass `seed: null` in the yaml to reseed from OS entropy instead.
+np.random.seed(_ENV["seed"])
 
 
 # ---------------------------------------------------------------------------

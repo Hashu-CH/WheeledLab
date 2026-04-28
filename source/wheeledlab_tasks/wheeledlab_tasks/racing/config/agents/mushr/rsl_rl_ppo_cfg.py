@@ -9,18 +9,12 @@ _POL = CONFIG["policy"]
 _ALGO = _PPO["algorithm"]
 
 
+# ---------------------------------------------------------------------------
+# Policy Config Definitions
+# ---------------------------------------------------------------------------
 @configclass
 class MushrCNNGRUPolicyCfg:
-    """Policy cfg for ActorCriticCNNGRU.
-
-    This is essentially a new config and class injected into rsl_rl 
-    on_policy_runner (see modified_rsl_rl). This version of rsl_rl 
-    doesn't have cnn+rnn. 
-
-    As always, modify parameters through racing_config.yaml (for racing task).
-    """
-
-    # rsl_rl on policy runner constructs module named class_name.pop() 
+    # rsl_rl on policy runner constructs module named class_name.pop()
     class_name: str = "ActorCriticCNNGRU"
     init_noise_std: float = 1.0
     activation: str = "relu"
@@ -36,9 +30,45 @@ class MushrCNNGRUPolicyCfg:
     rnn_type: str = "gru"
     rnn_hidden_dim: int = 128
     rnn_num_layers: int = 1
-    # again, all defualts overriden in yaml (see below)
+
+@configclass
+class MushrMLPPolicyCfg:
+    class_name: str = "ActorCritic"
+    init_noise_std: float = 1.0
+    activation: str = "relu"
+    actor_hidden_dims: list = (64, 64)
+    critic_hidden_dims: list = (64, 64)
 
 
+@configclass
+class MushrCNNPolicyCfg:
+    class_name: str = "ActorCriticCNN"
+    init_noise_std: float = 1.0
+    activation: str = "relu"
+    actor_hidden_dims: list = (64, 64)
+    critic_hidden_dims: list = (64, 64)
+    image_shape: tuple = (1, 40, 80)
+    cnn_channels: list = (16, 32)
+    cnn_kernel_sizes: list = (5, 3)
+    cnn_strides: list = (2, 2)
+    cnn_out_dim: int = 64
+
+
+@configclass
+class MushrRNNPolicyCfg:
+    class_name: str = "ActorCriticRecurrent"
+    init_noise_std: float = 1.0
+    activation: str = "relu"
+    actor_hidden_dims: list = (64, 64)
+    critic_hidden_dims: list = (64, 64)
+    rnn_type: str = "gru"
+    rnn_hidden_dim: int = 128
+    rnn_num_layers: int = 1
+
+
+# ---------------------------------------------------------------------------
+# Runner Config
+# ---------------------------------------------------------------------------
 @configclass
 class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     # Training hyperparameters
@@ -47,9 +77,9 @@ class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = _PPO["save_interval"]
     experiment_name = _PPO["experiment_name"]
 
-    # CNN + GRU + MLP head. See actor_critic_cnn_gru.py.
+    # Swap policy via name above
     empirical_normalization = _PPO["empirical_normalization"]
-    policy = MushrCNNGRUPolicyCfg(
+    policy = MushrMLPPolicyCfg(
         class_name=_POL["class_name"],
         init_noise_std=float(_POL["init_noise_std"]),
         activation=_POL["activation"],

@@ -1,12 +1,9 @@
-"""CNN + GRU actor-critic using rsl_rl ver 2.3.3
-
-observation layout is in task/mdp/observations
+"""CNN actor-critics using rsl_rl ver 2.3.3.
 
 For racing: [(1,40,80) camera, (vel, ang, a_t-1) proprioceptive data]
 
-Note: 
-
-- actor and critic share the same CNN. Will need to split if future 
+Note:
+- actor and critic share the same CNN. Will need to split if future
   distillation or asymmetric critic is done.
 """
 
@@ -55,6 +52,98 @@ def _build_cnn(
 
     # final conv model with last lin output
     return nn.Sequential(conv, nn.Linear(flat_dim, out_dim), resolve_nn_activation(activation))
+
+
+class ActorCriticCNN(ActorCritic):
+    """
+    CNN + MLP actor-critic, no recurrence.
+
+    Sibling of ActorCriticCNNGRU for ablation: same image+proprio split,
+    same CNN encoder, but the encoded vector flows directly into the MLP
+    heads without a memory module.
+    """
+
+    is_recurrent = False
+
+    def __init__(
+        self,
+        num_actor_obs: int,
+        num_critic_obs: int,
+        num_actions: int,
+        image_shape: tuple[int, int, int] = (1, 40, 80),
+        cnn_channels: list[int] = (16, 32),
+        cnn_kernel_sizes: list[int] = (5, 3),
+        cnn_strides: list[int] = (2, 2),
+        cnn_out_dim: int = 64,
+        actor_hidden_dims: list[int] = (64, 64),
+        critic_hidden_dims: list[int] = (64, 64),
+        activation: str = "relu",
+        init_noise_std: float = 1.0,
+        noise_std_type: str = "scalar",
+        **kwargs,
+    ):
+        # shape checks before parent init so a bad cfg fails fast
+        image_shape_t = tuple(image_shape)
+        n_img = int(image_shape_t[0] * image_shape_t[1] * image_shape_t[2])
+        if n_img > num_actor_obs:
+            raise ValueError(
+                f"ActorCriticCNN: image_shape numel ({n_img}) exceeds "
+                f"num_actor_obs ({num_actor_obs}). Obs layout likely changed — "
+                f"update image_shape in the policy cfg."
+            )
+        if n_img > num_critic_obs:
+            raise ValueError(
+                f"ActorCriticCNN: image_shape numel ({n_img}) exceeds "
+                f"num_critic_obs ({num_critic_obs})."
+            )
+
+        # MLP head input = cnn projection + remaining proprio scalars
+        num_proprio_a = num_actor_obs - n_img
+        num_proprio_c = num_critic_obs - n_img
+        enc_dim_a = cnn_out_dim + num_proprio_a
+        enc_dim_c = cnn_out_dim + num_proprio_c
+
+        super().__init__(
+            num_actor_obs=enc_dim_a,
+            num_critic_obs=enc_dim_c,
+            num_actions=num_actions,
+            actor_hidden_dims=list(actor_hidden_dims),
+            critic_hidden_dims=list(critic_hidden_dims),
+            activation=activation,
+            init_noise_std=init_noise_std,
+            noise_std_type=noise_std_type,
+        )
+
+        self.image_shape = image_shape_t
+        self._n_img = n_img
+
+        # shared cnn for actor and critic
+        self.cnn = _build_cnn(
+            self.image_shape,
+            list(cnn_channels),
+            list(cnn_kernel_sizes),
+            list(cnn_strides),
+            cnn_out_dim,
+            activation,
+        )
+
+    def _encode(self, obs: torch.Tensor) -> torch.Tensor:
+        leading, D = obs.shape[:-1], obs.shape[-1]
+        flat = obs.reshape(-1, D)
+        img = flat[:, : self._n_img].reshape(-1, *self.image_shape)
+        proprio = flat[:, self._n_img:]
+        feat = self.cnn(img)
+        enc = torch.cat([feat, proprio], dim=-1)
+        return enc.reshape(*leading, -1)
+
+    def act(self, observations, **kwargs):
+        return super().act(self._encode(observations))
+
+    def act_inference(self, observations):
+        return super().act_inference(self._encode(observations))
+
+    def evaluate(self, critic_observations, **kwargs):
+        return super().evaluate(self._encode(critic_observations))
 
 
 class ActorCriticCNNGRU(ActorCritic):
@@ -157,13 +246,6 @@ class ActorCriticCNNGRU(ActorCritic):
         feat = self.cnn(img)                                # (N, cnn_out_dim)
         enc = torch.cat([feat, proprio], dim=-1)            # (N, enc_dim)
         return enc.reshape(*leading, -1)                    # (..., enc_dim)
-
-    # ------------------------------------------------------------------
-    # rsl_rl hooks. Memory.forward unsqueezes a seq dim for rollout inputs
-    # and returns (1, B, H); in sequence-mode (PPO update) it passes through
-    # (T, B, H). squeeze(0) drops the length-1 dim in the rollout case and
-    # is a no-op when T > 1.
-    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Actor Critic calls using the CNN encode step as preprocess

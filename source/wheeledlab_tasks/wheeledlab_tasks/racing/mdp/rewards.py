@@ -215,12 +215,32 @@ class RacingRewardsCfg:
         weight=float(_RW["time_step_pen_weight"]),
     )
 
-    # Termination rewards and penalties
     goal_reached_rew = RewTerm(
         func=mdp.rewards.is_terminated_term,
         weight=float(_RW["goal_reached_rew_weight"]),
         params={"term_keys": "goal_reached"},
     )
+
+    # Goal agnostic rewards
+    tangential_vel = RewTerm(
+        func=tangential_speed,
+        weight=float(_RW["tangential_speed_weight"]),
+    )
+    cross_track = RewTerm(
+        func=cross_track_penalty,
+        weight=float(_RW["cross_track_pen_weight"]),
+        params={
+            "k_in": float(_RW["cross_track_k_in"]),
+            "k_out": float(_RW["cross_track_k_out"]) 
+        }
+    )
+    low_speed = RewTerm(
+        func=low_speed_penalty,
+        weight=float(_RW["low_speed_weight"]),
+        params={"low_speed_thresh": float(_RW["low_speed_thresh"])}
+    )
+
+    # Termination penalty for leaving tile 
     out_of_tile_pen = RewTerm(
         func=mdp.rewards.is_terminated_term,
         weight=float(_RW["out_of_tile_pen_weight"]),
