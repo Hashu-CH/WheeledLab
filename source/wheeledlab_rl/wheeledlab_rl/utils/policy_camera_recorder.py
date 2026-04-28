@@ -124,7 +124,7 @@ class PolicyCameraRecorder(gym.Wrapper):
         output.close()
 
         if self.enable_wandb:
-            wandb.log({self.wandb_key: wandb.Video(path)}, step=self._step_count, commit=True)
+            wandb.log({self.wandb_key: wandb.Video(path)}, commit=False)
 
         self._frames = []
         self._recording = False

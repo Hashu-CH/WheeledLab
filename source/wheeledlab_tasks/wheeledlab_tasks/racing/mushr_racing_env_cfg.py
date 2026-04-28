@@ -4,7 +4,7 @@ Scene / env configuration for the Mushr Racing Task.
 Notes:
 
 - RacingTerrainImporterCfg is a pure-data spec (OmegaConf-safe). Track
-  geometry and runtime methods live on RacingTerrainImporter in terrain.py;
+  geometry and runtime methods live on RacingTerrainImporter in track/runtime.py;
   reward/event fns reach them via env.scene.terrain.<method>.
 - env_spacing is 0 and env.scene.env_origins stays at (0, 0, 0) for every
   env. All state is world-frame: polylines, spawn poses, pose observations,
@@ -39,8 +39,12 @@ from wheeledlab_assets.mushr import MUSHR_SUS_CFG
 from wheeledlab_tasks.common import Mushr4WDActionCfg
 
 from .config import CONFIG
-from .terrain import RacingTerrainImporter, stash_track_cache
-from .utils import create_track_geometry, compute_map_size
+from .track import (
+    RacingTerrainImporter,
+    stash_track_cache,
+    create_track_geometry,
+    compute_map_size,
+)
 from .mdp import (
     RacingEventsCfg,
     RacingEventsRandomCfg,
@@ -72,9 +76,11 @@ class InitialPoseCfg:
 # ---------------------------------------------------------------------------
 @configclass
 class RacingTerrainImporterCfg(TerrainImporterCfg):
-    # Pure-data spec. Runtime state (track cache, device tensors) lives on
-    # RacingTerrainImporter — see terrain.py. Don't keep non serializable 
-    # data on config.
+    """This config passes itself to RacingTerrainImporter
+    
+    We can't specify args so we store the track cache as a global
+    for the TerrainImporter override to find and use.
+    """
     class_type: type = RacingTerrainImporter # runtime class to instantiate
 
     # Map generation parameters to make it realistic for how we test in real
@@ -134,7 +140,7 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
             self.file_name, self.map_size, self.spacing, self.env_size, self.color_sampling,
         )
         # Hand off to RacingTerrainImporter.__init__, which pops it at scene-build time.
-        stash_track_cache(self, track_cache)
+        stash_track_cache(track_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -142,14 +148,8 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
 # ---------------------------------------------------------------------------
 @configclass
 class MushrRacingSceneCfg(InteractiveSceneCfg):
-    """Configuration for a Mushr car scene with a racetrack terrain and sensors.
-
-    The colored track plane (/World/colored_plane) is visuals-only — the
-    UsdPhysics.MeshCollisionAPI calls in racing/utils/__init__.py do NOT
-    actually enable collision (they need a paired UsdPhysics.CollisionAPI).
-    A GroundPlaneCfg supplies the actual collider, parked just below z=0
-    (-1e-4) so it physically backstops the cars without z-fighting the
-    colored mesh sitting at exactly z=0.
+    """
+    Configuration for a Mushr car scene with a racetrack terrain and sensors.
     """
     terrain = RacingTerrainImporterCfg()
     ground = AssetBaseCfg(
@@ -209,7 +209,7 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
 @configclass
 class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
     seed: int = _ENV["seed"]
-    num_envs: int = 512 # default value, truth in rss config
+    num_envs: int = 512 # This is a default overriden by config
     env_spacing: float = 0.
 
     events: RacingEventsCfg = RacingEventsRandomCfg()

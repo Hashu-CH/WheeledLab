@@ -65,3 +65,4 @@ class RacingObsCfg:
             self.concatenate_terms = bool(_OBS["concatenate_terms"])
 
     policy: PolicyCfg = PolicyCfg() # policy group term 
+    # can define actor as well differently

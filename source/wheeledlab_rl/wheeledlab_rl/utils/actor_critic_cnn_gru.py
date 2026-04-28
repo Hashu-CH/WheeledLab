@@ -8,8 +8,6 @@ Note:
 
 - actor and critic share the same CNN. Will need to split if future 
   distillation or asymmetric critic is done.
-- TODO: putting off resiudal learning for now. https://arxiv.org/abs/2604.07672 
-  some things show it doesn't transfer well to real.
 """
 
 from __future__ import annotations

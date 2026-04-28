@@ -16,7 +16,6 @@ from .bezier import make_segment
 def rotate(v, angle):
     """Rotate a 2D vector by angle (radians)."""
     cos, sin = np.cos(angle), np.sin(angle)
-    # never in my life did I think I'd use a rotation matrix again
     return np.array([cos*v[0] - sin*v[1], sin*v[0] + cos*v[1]])
 
 def fwd_perp(tan):

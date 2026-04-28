@@ -1,5 +1,5 @@
 """
-Loader for the racing task's single-source-of-truth YAML hyperparameter file.
+Loader for the racing task's YAML hyperparameter file.
 
 The YAML is resolved in this order:
   1. $WHEELEDLAB_RACING_CONFIG if set
@@ -13,6 +13,7 @@ import yaml
 from functools import lru_cache
 
 
+# just specify new path in train.sh to point to custom yaml file for large tunes
 ENV_VAR = "WHEELEDLAB_RACING_CONFIG"
 _DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "racing_config.yaml")
 _REQUIRED_SECTIONS = (

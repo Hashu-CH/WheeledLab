@@ -36,6 +36,7 @@ class MushrCNNGRUPolicyCfg:
     rnn_type: str = "gru"
     rnn_hidden_dim: int = 128
     rnn_num_layers: int = 1
+    # again, all defualts overriden in yaml (see below)
 
 
 @configclass

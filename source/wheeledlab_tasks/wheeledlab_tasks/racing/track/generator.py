@@ -6,10 +6,11 @@ Notes:
 - Track-aware rewards need a geometric view of the terrain — centerline
   polyline, tangents, per-tile widths — which live in the TrackCache
   dataclass below and are populated when the USD is authored.
-- A rasterised traversability grid is still computed inside
+- A rasterised traversability grid is computed inside
   generated_colored_track_plane to color the ground-plane mesh faces
-  (black = off-track, white = on-track). It gets discarded after the USD is
-  written; reward logic and spawn sampling run off the polyline cache.
+  (black = off-track, white = on-track). It is also kept on TrackCache so
+  reward terms can do per-wheel pixel-lookups against the same drivable
+  surface that gets rendered.
 - Coord-frame convention: polylines from curriculum.generate_track are in
   grid-cell units within a tile (x in [0, env_num_cols], y in [0, env_num_rows]).
   We convert to WORLD METERS here so reward-time projection doesn't re-derive
@@ -17,7 +18,7 @@ Notes:
 
 Concern:
 
-- Right now, each environment (robot) gets its own track and tile. Which 1, constraints 
+- Right now, each environment (robot) gets its own track and tile. Which 1, constrains 
   compute since we cache track information and can't re-use. 2, will likely be high 
   variance.
   We could seed tracks and duplicate them as an easy fix. Most optimally, we allow duplicate 
@@ -30,7 +31,7 @@ from dataclasses import dataclass
 import numpy as np
 from pxr import Usd, UsdGeom, UsdPhysics, Gf
 
-from .procedural_track_gen.curriculum import CurriculumConfig, generate_track
+from .procedural.curriculum import CurriculumConfig, generate_track
 from ..config import CONFIG
 
 _TER = CONFIG["terrain"]
@@ -52,11 +53,18 @@ class TrackCache:
     """
     polylines_w: np.ndarray # (num_tiles, M_max, 2), float32
     tangents_w: np.ndarray # (num_tiles, M_max - 1, 2), unit vectors
+    segment_lengths_m: np.ndarray # (num_tiles, M_max - 1), float32, segment world lengths
+    cumulative_arc_lengths_m: np.ndarray # (num_tiles, M_max), float32, prefix sum of seg lengths along polyline
+    total_lengths_m: np.ndarray # (num_tiles,), float32, last valid cumulative length per polyline
+    is_closed: np.ndarray # (num_tiles,), bool, True for closed-loop tracks
     segment_valid: np.ndarray # (num_tiles, M_max - 1), bool
     track_widths_m: np.ndarray # (num_tiles,), meters
     tile_origins_w: np.ndarray # (num_tiles, 2), world-meter tile centers
     tile_extent_m: tuple[float, float] # (x_extent, y_extent) per tile, meters (fixed here)
     tile_cell_bounds: np.ndarray # (num_tiles, 4): row_start, row_end, col_start, col_end
+    traversability_grid: np.ndarray # (num_rows, num_cols), bool, True = on-track (drivable)
+    world_origin_xy_m: tuple[float, float] # world-meter coords of grid cell (0, 0) corner: (-width/2, -height/2)
+    cell_size_m: tuple[float, float] # (col_spacing, row_spacing) for world<->cell conversion
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +168,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     num_tiles = num_env_rows * num_env_cols
     tile_polylines_w: list[np.ndarray] = [] # world-meter polylines per tile
     tile_track_widths_m: list[float] = [] # world-meter track width per tile
+    tile_is_closed: list[bool] = [] # True for closed-loop tracks (phase 2)
     tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
     tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
 
@@ -195,6 +204,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
             # means the effective corridor is ~= track_width * spacing).
             tile_track_widths_m.append(float(config.track_width) * row_spacing)
+            tile_is_closed.append(not config.is_chain)
 
             # Tile origin: world-meter center of the tile. Stored for viz /
             # debug; not currently used at runtime — see TODO in
@@ -225,15 +235,35 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     tangents_w = (diffs / safe_lengths).astype(np.float32)
     tangents_w[~segment_valid] = 0.0
 
+    # Per-segment lengths (zeroed past the polyline so cumsum doesn't accumulate
+    # padding) and prefix-sum cumulative arc-length per polyline vertex.
+    segment_lengths_m = lengths.squeeze(-1).astype(np.float32) # (num_tiles, M_max-1)
+    segment_lengths_m = np.where(segment_valid, segment_lengths_m, 0.0).astype(np.float32)
+    cumulative_arc_lengths_m = np.concatenate(
+        [
+            np.zeros((num_tiles, 1), dtype=np.float32),
+            np.cumsum(segment_lengths_m, axis=1, dtype=np.float32),
+        ],
+        axis=1,
+    ) # (num_tiles, M_max)
+    total_lengths_m = cumulative_arc_lengths_m[:, -1].astype(np.float32) # (num_tiles,)
+
     # Save track cache for generated world plane
     track_cache = TrackCache(
         polylines_w=polylines_w,
         tangents_w=tangents_w,
+        segment_lengths_m=segment_lengths_m,
+        cumulative_arc_lengths_m=cumulative_arc_lengths_m,
+        total_lengths_m=total_lengths_m,
+        is_closed=np.asarray(tile_is_closed, dtype=bool),
         segment_valid=segment_valid,
         track_widths_m=np.asarray(tile_track_widths_m, dtype=np.float32),
         tile_origins_w=tile_origins_w,
         tile_extent_m=(env_num_cols * col_spacing, env_num_rows * row_spacing),
         tile_cell_bounds=tile_cell_bounds,
+        traversability_grid=traversability_hashmap.copy(),
+        world_origin_xy_m=(-width / 2.0, -height / 2.0),
+        cell_size_m=(col_spacing, row_spacing),
     )
 
     # paint triangle colors for USD mesh init
@@ -293,6 +323,3 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
     stage.GetRootLayer().Save()
 
     return track_cache
-
-# Spawn-pose sampling lives in track_utils.sample_poses_along_polylines —
-# kept next to project_nearest_segment since both operate on the same cache.
