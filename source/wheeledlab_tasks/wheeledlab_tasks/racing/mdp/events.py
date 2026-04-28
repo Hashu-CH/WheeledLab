@@ -29,6 +29,7 @@ from ..config import CONFIG
 
 _EV = CONFIG["events"]
 _WF = _EV["wheel_friction"]
+_GOALS = CONFIG.get("goals", {})
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +42,6 @@ def reset_root_state(
 ):
     """Reset a set (env_ids) of environments to random poses on their
     respective tracks. Invoked by the event manager on env termination.
-
-    generate_random_poses returns WORLD-frame coords sampled along each env's
-    centerline polyline. The asset's default_root_state is (0, 0, 0) for all
-    envs (env_spacing=0, init_state.pos=0), so the subsequent add is a no-op
-    in practice — kept for Isaac Lab convention and in case a non-zero
-    init_state is ever configured.
 
     Args:
     - env: the running environment
@@ -66,9 +61,7 @@ def reset_root_state(
     lin_vels = torch.stack(list(map(lambda x: torch.tensor(x.lin_vel, device=env.device), valid_poses))).float()
     ang_vels = torch.stack(list(map(lambda x: torch.tensor(x.ang_vel, device=env.device), valid_poses))).float()
 
-    # posns is already world-frame; default_root_state[:3] is zero here so the
-    # add is a no-op, but keeps the pattern compatible with any future
-    # init_state offset.
+    # default root state is 0 but allows for changes to be reflected accurately later
     positions = posns + asset.data.default_root_state[env_ids, :3]
     orientations = oris
     lin_vels = lin_vels + asset.data.default_root_state[env_ids, 7:10]
@@ -77,6 +70,31 @@ def reset_root_state(
     # Write pose/vel into the sim, scoped to just the resetting envs.
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(torch.cat([lin_vels, ang_vels], dim=-1), env_ids=env_ids)
+
+
+def init_progress_state(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    loop_dist_frac_range: tuple[float, float] = (0.3, 0.95),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Seed per-env distance-to-finish + goal arc-length on the terrain.
+
+    Must run AFTER reset_root_state in the same reset batch so the spawn pose
+    has been written and we can project it onto the centerline. 
+    -- Execution order follows field order in RacingEventsCfg. -- 
+
+    Args:
+    - env: the running environment
+    - env_ids: ids of the envs being reset
+    - loop_dist_frac_range: (lo, hi) fraction of how much dist to project 
+      finish line forward
+    - asset_cfg: handle for the racing robot
+    """
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    terrain: TerrainImporter = env.scene.terrain
+    spawn_xy = asset.data.root_pos_w[env_ids, :2]
+    terrain.init_progress(env_ids, spawn_xy, loop_dist_frac_range)
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +106,13 @@ class RacingEventsCfg:
     reset_root_state = EventTerm(
         func=reset_root_state,
         mode="reset",
+    )
+    init_progress = EventTerm(
+        func=init_progress_state,
+        mode="reset",
+        params={
+            "loop_dist_frac_range": tuple(_GOALS.get("loop_dist_frac_range", [0.3, 0.95])),
+        },
     )
 
 

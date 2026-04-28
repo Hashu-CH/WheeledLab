@@ -38,7 +38,7 @@ def plot_curriculum_progression(figsize=(14, 6), show=True):
                 spine.set_edgecolor("red")
                 spine.set_linewidth(3)
 
-    plt.suptitle("Curriculum Progression (difficulty 0→1, phase change at d=0.65)", fontsize=11)
+    plt.suptitle("Curriculum Progression (difficulty 0-1, phase change at d=0.65)", fontsize=11)
     plt.tight_layout()
     if show:
         plt.show()

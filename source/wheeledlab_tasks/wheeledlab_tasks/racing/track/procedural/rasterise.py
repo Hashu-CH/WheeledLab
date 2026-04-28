@@ -44,10 +44,10 @@ def rasterise_track(
             if 0 <= gx < cols and 0 <= gy < rows:
                 grid[gy, gx] = True
 
-    # asymmetric cross kernel for uniform dilation
+    # symmetric kernel
     struct = np.array([[0, 1, 0],
-                       [0, 1, 1],
-                       [0, 0, 0]], dtype=bool)
+                       [1, 1, 1],
+                       [0, 1, 0]], dtype=bool)
     iterations = max(1, track_width // 2)
     grid = binary_dilation(grid, structure=struct, iterations=iterations)
     return grid
