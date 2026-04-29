@@ -107,6 +107,12 @@ def compute_progress_step(env) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor
     env._racing_progress_cache = (counter, result) # cache result
     return result
 
+def on_track_mask(env, off_track_wheel_threshold):
+    wheel_xy = _wheel_xy_w(env)
+    off_mask = env.scene.terrain.wheels_off_track(wheel_xy)
+    on_track_enough = off_mask.sum(dim=-1) < off_track_wheel_threshold
+    return on_track_enough
+
 
 # ---------------------------------------------------------------------------
 # Old Reward Terms Inherited from Visual Task
@@ -184,11 +190,8 @@ def progress_reward(env, max_step_m: float = 2.0, off_track_wheel_threshold: int
     """
     delta, _, _ = compute_progress_step(env)
     delta = delta.clamp(-max_step_m, max_step_m)
-
-    wheel_xy = _wheel_xy_w(env)
-    off_mask = env.scene.terrain.wheels_off_track(wheel_xy)
-    on_track_enough = off_mask.sum(dim=-1) < off_track_wheel_threshold
-    return torch.where(on_track_enough, delta, torch.zeros_like(delta))
+    on_track_enough = on_track_mask(env, off_track_wheel_threshold)
+    return torch.where(on_track_enough, delta, delta.clamp(max=0))
 
 
 def time_step_penalty(env):
@@ -202,43 +205,43 @@ def time_step_penalty(env):
 @configclass
 class RacingRewardsCfg:
     # Goal oriented rewards and penalties
-    # progress_rew = RewTerm(
-    #     func=progress_reward,
-    #     weight=float(_RW["progress_rew_weight"]),
-    #     params={
-    #         "max_step_m": float(_GOALS.get("progress_clamp_m", 2.0)),
-    #         "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
-    #     },
-    # )
-    # time_step_pen = RewTerm(
-    #     func=time_step_penalty,
-    #     weight=float(_RW["time_step_pen_weight"]),
-    # )
+    progress_rew = RewTerm(
+        func=progress_reward,
+        weight=float(_RW["progress_rew_weight"]),
+        params={
+            "max_step_m": float(_GOALS.get("progress_clamp_m", 2.0)),
+            "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
+        },
+    )
+    time_step_pen = RewTerm(
+        func=time_step_penalty,
+        weight=float(_RW["time_step_pen_weight"]),
+    )
 
-    # goal_reached_rew = RewTerm(
-    #     func=mdp.rewards.is_terminated_term,
-    #     weight=float(_RW["goal_reached_rew_weight"]),
-    #     params={"term_keys": "goal_reached"},
-    # )
+    goal_reached_rew = RewTerm(
+        func=mdp.rewards.is_terminated_term,
+        weight=float(_RW["goal_reached_rew_weight"]),
+        params={"term_keys": "goal_reached"},
+    )
 
     # Goal agnostic rewards
-    tangential_vel = RewTerm(
-        func=tangential_speed,
-        weight=float(_RW["tangential_speed_weight"]),
-    )
-    cross_track = RewTerm(
-        func=cross_track_penalty,
-        weight=float(_RW["cross_track_pen_weight"]),
-        params={
-            "k_in": float(_RW["cross_track_k_in"]),
-            "k_out": float(_RW["cross_track_k_out"]) 
-        }
-    )
-    low_speed = RewTerm(
-        func=low_speed_penalty,
-        weight=float(_RW["low_speed_weight"]),
-        params={"low_speed_thresh": float(_RW["low_speed_thresh"])}
-    )
+    # tangential_vel = RewTerm(
+    #     func=tangential_speed,
+    #     weight=float(_RW["tangential_speed_weight"]),
+    # )
+    # cross_track = RewTerm(
+    #     func=cross_track_penalty,
+    #     weight=float(_RW["cross_track_pen_weight"]),
+    #     params={
+    #         "k_in": float(_RW["cross_track_k_in"]),
+    #         "k_out": float(_RW["cross_track_k_out"]) 
+    #     }
+    # )
+    # low_speed = RewTerm(
+    #     func=low_speed_penalty,
+    #     weight=float(_RW["low_speed_weight"]),
+    #     params={"low_speed_thresh": float(_RW["low_speed_thresh"])}
+    # )
 
     # Termination penalty for leaving tile 
     out_of_tile_pen = RewTerm(

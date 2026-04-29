@@ -19,7 +19,7 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 from ..config import CONFIG
-from .rewards import compute_progress_step
+from .rewards import compute_progress_step, on_track_mask
 
 _GOALS = CONFIG.get("goals", {})
 
@@ -34,16 +34,18 @@ def out_of_tile(env):
     return env.scene.terrain.out_of_tile(poses_xy_w, env_ids)
 
 
-def goal_reached(env, eps_m: float = 0.5):
+def goal_reached(env, eps_m: float = 0.5, off_track_wheel_threshold: int = 3):
     """Fires when the car has arrived at (or just crossed) the finish line.
 
     Arg:
     - eps_m: car reached goal if within eps_m meters of finish
+    - off_track_wheel_threshold: gate fires only if fewer than this many
+      wheels are off-track at the crossing step
 
     Notes
     - Normal arrival: curr_dist < eps_m.
-    - Overshoot wrap: prev_dist - curr_dist > total_length / 2, if within 
-      one step and the agent dropped more than half the track distance, it 
+    - Overshoot wrap: prev_dist - curr_dist > total_length / 2, if within
+      one step and the agent dropped more than half the track distance, it
       must have passed finish line
     """
     _, curr_dist, prev_dist = compute_progress_step(env)
@@ -51,7 +53,8 @@ def goal_reached(env, eps_m: float = 0.5):
     total = terrain._total_lengths_t.clamp_min(1e-6)
     arrived = curr_dist < eps_m
     overshoot = (prev_dist - curr_dist) > 0.5 * total
-    return arrived | overshoot
+    on_track = on_track_mask(env, off_track_wheel_threshold)
+    return (arrived | overshoot) & on_track
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +65,10 @@ class RacingTerminationsCfg:
     # time fields live in racing_env_cfg in the post init
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     out_range = DoneTerm(func=out_of_tile)
-    # goal_reached = DoneTerm(
-    #     func=goal_reached,
-    #     params={"eps_m": float(_GOALS.get("goal_reached_eps_m", 0.5))},
-    # )
+    goal_reached = DoneTerm(
+        func=goal_reached,
+        params={
+            "eps_m": float(_GOALS.get("goal_reached_eps_m", 0.5)),
+            "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
+        },
+    )
