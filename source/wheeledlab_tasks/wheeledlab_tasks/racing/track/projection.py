@@ -90,6 +90,7 @@ def sample_poses_along_polylines(
     env_ids,
     car_width_m: float,
     margin_m: float = 0.0,
+    yaw_offset_deg_range: tuple[float, float] = (-30.0, 30.0),
 ):
   """Sample world-frame (x, y, yaw) spawn poses along each env's centerline.
 
@@ -125,8 +126,9 @@ def sample_poses_along_polylines(
       valid_indices = np.where(segment_valid[tile_idx])[0]
 
       if len(valid_indices) == 0:
-          # Fall back if track generation produced no valid segments.
-          poses.append((0.0, 0.0, float(np.random.uniform(0, 360))))
+          # Fall back if bad track gen
+          fallback_yaw = float(np.random.uniform(*yaw_offset_deg_range))
+          poses.append((0.0, 0.0, fallback_yaw % 360.0))
           continue
       
       # sample a segment and lerp param t on segment
@@ -147,7 +149,9 @@ def sample_poses_along_polylines(
       lateral = float(np.random.uniform(-band, band))
 
       world_pos = foot_w + lateral * n_hat
-      angle = float(np.random.uniform(0, 360))
+      tangent_yaw_deg = float(np.degrees(np.arctan2(tangent[1], tangent[0])))
+      yaw_offset = float(np.random.uniform(*yaw_offset_deg_range))
+      angle = (tangent_yaw_deg + yaw_offset) % 360.0
       poses.append((float(world_pos[0]), float(world_pos[1]), angle))
 
   return poses

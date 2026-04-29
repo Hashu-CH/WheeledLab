@@ -5,7 +5,7 @@
 # Training Variables
 run:
   num_envs: 512        # parallel envs (envs == num tracks)
-  num_iterations: 500 # upper bound
+  num_iterations: 1000 # upper bound training steps
 
 # Running Environment Variables
 env:
@@ -25,10 +25,10 @@ terrain:
   col_spacing: 0.25
   color_sampling: false 
   car_width_m: 0.28 
-  difficulty_range: [0, 1]
+  difficulty_range: [0, .9]
   phase_boundary: 0.0  # threshold for chains -> closed loops
-  track_width_cells: 8 
-  steps_per_segment: 30
+  track_width_cells: 5 
+  steps_per_segment: 40
   margin_frac: 0.1
 
 # PPO Parameters
@@ -36,16 +36,16 @@ ppo:
   num_steps_per_env: 128              # rollout length before update
   max_iterations: 4000                # runner cap (overridden by run.num_iterations)
   save_interval: 50                   # save checkpoint interval
-  experiment_name: "mushr_ppo_racing_mlp" # ======= CHANGE THIS BETWEEN RUNS ========
+  experiment_name: "mushr_ppo_racing_mlp_vel" # ======= CHANGE THIS BETWEEN RUNS ========
   empirical_normalization: false      # For visual policies with proprio don't change
   algorithm:
-    value_loss_coef: 1.0              # value loss weight in total loss
+    value_loss_coef: 3.0              # value loss weight in total loss
     use_clipped_value_loss: true      # PPO-style clipping on value loss
     clip_param: 0.2                   # PPO policy ratio clip
     entropy_coef: 0.01                # exploration bonus weight
-    num_learning_epochs: 5            # gradient passes over each rollout
+    num_learning_epochs: 4            # gradient passes over each rollout
     num_mini_batches: 4               # mini-batches per epoch (inc for more freq updates)
-    learning_rate: 1.0e-3             # optimizer step size
+    learning_rate: 5.0e-4             # optimizer step size
     schedule: "adaptive"              # learning rate to be dynamic
     gamma: 0.99                       # reward discount factor
     lam: 0.95                         # GAE smoothing factor
@@ -55,7 +55,7 @@ ppo:
 # Actor Critic Policy Params
 policy:
   class_name: "ActorCritic"
-  init_noise_std: 0.5
+  init_noise_std: 1
   activation: "relu" # activation shared across ALL nn
   actor_hidden_dims: [64, 64]
   critic_hidden_dims: [64, 64]
@@ -89,8 +89,8 @@ rewards:
 
 # Goal Oriented Reward Parameters
 goals:
-  loop_dist_frac_range: [0.3, 0.95]
-  off_track_wheel_threshold: 3
+  loop_dist_frac_range: [0.1, 0.95]
+  off_track_wheel_threshold: 2
   goal_reached_eps_m: 0.5
   progress_clamp_m: 2.0
 
@@ -105,6 +105,7 @@ events:
     make_consistent: false
   base_mass_range:  [1.0, 3.0]
   wheel_mass_range: [0.01, 0.3]
+  spawn_yaw_offset_deg_range: [-30.0, 30.0]
 
 # Observations
 observations:

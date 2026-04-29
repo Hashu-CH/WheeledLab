@@ -85,14 +85,14 @@ class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         activation=_POL["activation"],
         actor_hidden_dims=list(_POL["actor_hidden_dims"]),
         critic_hidden_dims=list(_POL["critic_hidden_dims"]),
-        image_shape=tuple(_POL["image_shape"]),
-        cnn_channels=list(_POL["cnn_channels"]),
-        cnn_kernel_sizes=list(_POL["cnn_kernel_sizes"]),
-        cnn_strides=list(_POL["cnn_strides"]),
-        cnn_out_dim=int(_POL["cnn_out_dim"]),
-        rnn_type=_POL["rnn_type"],
-        rnn_hidden_dim=int(_POL["rnn_hidden_dim"]),
-        rnn_num_layers=int(_POL["rnn_num_layers"]),
+        # image_shape=tuple(_POL["image_shape"]),
+        # cnn_channels=list(_POL["cnn_channels"]),
+        # cnn_kernel_sizes=list(_POL["cnn_kernel_sizes"]),
+        # cnn_strides=list(_POL["cnn_strides"]),
+        # cnn_out_dim=int(_POL["cnn_out_dim"]),
+        # rnn_type=_POL["rnn_type"],
+        # rnn_hidden_dim=int(_POL["rnn_hidden_dim"]),
+        # rnn_num_layers=int(_POL["rnn_num_layers"]),
     )
 
     # PPO algo hyperparameter

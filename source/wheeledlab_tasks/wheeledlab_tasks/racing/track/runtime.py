@@ -256,7 +256,12 @@ class RacingTerrainImporter(TerrainImporter):
         y_out = local[..., 1].abs() > (0.5 * wy)
         return torch.logical_or(x_out, y_out)
 
-    def generate_random_poses(self, num_poses: int, env_ids=None) -> list["InitialPoseCfg"]:
+    def generate_random_poses(
+        self, 
+        num_poses: int, 
+        env_ids=None,
+        yaw_offset_deg_range: tuple[float, float] = (-30.0, 30.0),
+    ) -> list["InitialPoseCfg"]:
         """Sample spawn poses for a reset batch.
 
         Args:
@@ -273,6 +278,7 @@ class RacingTerrainImporter(TerrainImporter):
             self.track_cache, env_ids,
             car_width_m=self.cfg.car_width_m,
             margin_m=0.0,
+            yaw_offset_deg_range=yaw_offset_deg_range,
         )
         return [
             InitialPoseCfg(

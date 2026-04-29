@@ -202,24 +202,24 @@ def time_step_penalty(env):
 @configclass
 class RacingRewardsCfg:
     # Goal oriented rewards and penalties
-    progress_rew = RewTerm(
-        func=progress_reward,
-        weight=float(_RW["progress_rew_weight"]),
-        params={
-            "max_step_m": float(_GOALS.get("progress_clamp_m", 2.0)),
-            "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
-        },
-    )
-    time_step_pen = RewTerm(
-        func=time_step_penalty,
-        weight=float(_RW["time_step_pen_weight"]),
-    )
+    # progress_rew = RewTerm(
+    #     func=progress_reward,
+    #     weight=float(_RW["progress_rew_weight"]),
+    #     params={
+    #         "max_step_m": float(_GOALS.get("progress_clamp_m", 2.0)),
+    #         "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
+    #     },
+    # )
+    # time_step_pen = RewTerm(
+    #     func=time_step_penalty,
+    #     weight=float(_RW["time_step_pen_weight"]),
+    # )
 
-    goal_reached_rew = RewTerm(
-        func=mdp.rewards.is_terminated_term,
-        weight=float(_RW["goal_reached_rew_weight"]),
-        params={"term_keys": "goal_reached"},
-    )
+    # goal_reached_rew = RewTerm(
+    #     func=mdp.rewards.is_terminated_term,
+    #     weight=float(_RW["goal_reached_rew_weight"]),
+    #     params={"term_keys": "goal_reached"},
+    # )
 
     # Goal agnostic rewards
     tangential_vel = RewTerm(

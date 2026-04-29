@@ -39,6 +39,7 @@ def reset_root_state(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    yaw_offset_deg_range: tuple[float, float] = (-30.0, 30.0),
 ):
     """Reset a set (env_ids) of environments to random poses on their
     respective tracks. Invoked by the event manager on env termination.
@@ -52,7 +53,10 @@ def reset_root_state(
     terrain: TerrainImporter = env.scene.terrain
 
     # env_ids is threaded through so each env spawns inside its own tile.
-    valid_poses = terrain.generate_random_poses(len(env_ids), env_ids=env_ids)
+    valid_poses = terrain.generate_random_poses(
+        len(env_ids), env_ids=env_ids,
+        yaw_offset_deg_range=yaw_offset_deg_range,
+    )
 
     # Unpack valid_poses (a list of InitialPoseCfgs) into sim-usable tensors.
     posns = torch.stack(list(map(lambda x: torch.tensor(x.pos, device=env.device), valid_poses))).float()
@@ -106,6 +110,9 @@ class RacingEventsCfg:
     reset_root_state = EventTerm(
         func=reset_root_state,
         mode="reset",
+        params={
+            "yaw_offset_deg_range": tuple(_EV.get("spawn_yaw_offset_deg_range", [-30.0, 30.0])),
+        },
     )
     init_progress = EventTerm(
         func=init_progress_state,

@@ -62,7 +62,7 @@ class RacingTerminationsCfg:
     # time fields live in racing_env_cfg in the post init
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     out_range = DoneTerm(func=out_of_tile)
-    goal_reached = DoneTerm(
-        func=goal_reached,
-        params={"eps_m": float(_GOALS.get("goal_reached_eps_m", 0.5))},
-    )
+    # goal_reached = DoneTerm(
+    #     func=goal_reached,
+    #     params={"eps_m": float(_GOALS.get("goal_reached_eps_m", 0.5))},
+    # )

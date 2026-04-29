@@ -28,7 +28,7 @@ def _consolidate_resolved_cfgs(run_cfg: RunConfig):
     ####### MODIFY CONFIGS USING EXPOSED OVERRIDES ####### TODO: anyway to resolve these better?
     run_cfg.env.num_envs = run_cfg.env_setup.num_envs
     run_cfg.env.scene.num_envs = run_cfg.env_setup.num_envs
-    run_cfg.env.seed = run_cfg.agent.seed
+    run_cfg.agent.seed = run_cfg.env.seed
     run_cfg.env.sim.device = run_cfg.train.device
 
     log = run_cfg.train.log
