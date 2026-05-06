@@ -1,0 +1,119 @@
+# Base config for the architecture sweep.
+# Per-arch YAMLs in this directory are full copies with `policy:` and
+# `ppo.experiment_name:` overridden. Keep this file in sync if you change
+# anything that should apply to ALL sweep runs (rewards, env, terrain, etc.).
+#
+# Run sweep with: bash run_sweep.sh
+
+run:
+  num_envs: 128        # parallel envs (envs == num tracks)
+  num_iterations: 3000 # upper bound training steps
+
+env:
+  seed: 67
+  episode_length_s: 20
+  sim_dt: 0.02
+  decimation: 10
+
+terrain:
+  env_num_rows: 50
+  env_num_cols: 50
+  row_spacing: 0.25
+  col_spacing: 0.25
+  color_sampling: false
+  car_width_m: 0.28
+  difficulty_range: [0, .9]
+  phase_boundary: 0.0
+  track_width_cells: 5
+  steps_per_segment: 40
+  margin_frac: 0.1
+
+ppo:
+  num_steps_per_env: 128
+  max_iterations: 4000
+  save_interval: 50
+  experiment_name: "OVERRIDE_ME"
+  empirical_normalization: false
+  algorithm:
+    value_loss_coef: 3.0
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    entropy_coef: 0.01
+    num_learning_epochs: 4
+    num_mini_batches: 2               # lowered from 4 — keeps batch size reasonable at 128 envs
+    learning_rate: 5.0e-4
+    schedule: "adaptive"
+    gamma: 0.99
+    lam: 0.95
+    desired_kl: 0.01
+    max_grad_norm: 1.0
+
+policy:
+  class_name: "OVERRIDE_ME"
+  init_noise_std: 1
+  activation: "relu"
+  actor_hidden_dims: [64, 64]
+  critic_hidden_dims: [64, 64]
+  image_shape: [1, 40, 80]
+  cnn_channels: [16, 32]
+  cnn_kernel_sizes: [5, 3]
+  cnn_strides: [2, 2]
+  cnn_out_dim: 64
+  rnn_type: "gru"
+  rnn_hidden_dim: 128
+  rnn_num_layers: 1
+
+rewards:
+  progress_rew_weight: 1.0
+  time_step_pen_weight: -0.01
+  goal_reached_rew_weight: 5.0
+  out_of_tile_pen_weight: -10.0
+  tangential_speed_weight: 1.5
+  cross_track_pen_weight: 0.3
+  cross_track_k_in: 1.0
+  cross_track_k_out: 5.0
+  low_speed_thresh: 0.3
+  low_speed_weight: -0.2
+
+goals:
+  loop_dist_frac_range: [0.1, 0.95]
+  off_track_wheel_threshold: 2
+  goal_reached_eps_m: 0.5
+  progress_clamp_m: 2.0
+
+events:
+  wheel_friction:
+    static_friction_range:  [0.4, 0.6]
+    dynamic_friction_range: [0.4, 0.6]
+    restitution_range:      [0.0, 0.0]
+    num_buckets: 10
+    make_consistent: false
+  base_mass_range:  [1.0, 3.0]
+  wheel_mass_range: [0.01, 0.3]
+  spawn_yaw_offset_deg_range: [-30.0, 30.0]
+
+observations:
+  enable_corruption: true
+  concatenate_terms: true
+  base_lin_vel_noise: [-0.1, 0.1]
+  base_ang_vel_noise: [-0.1, 0.1]
+  last_action_noise:  [-0.1, 0.1]
+  last_action_clip:   [-1.0, 1.0]
+
+logging:
+  video: true
+  video_length: 500
+  video_interval: 15000
+  video_resolution: [1280, 720]
+  video_crf: 30
+  log_every: 10
+  checkpoint_every: 1000
+  no_checkpoints: false
+  no_wandb: false
+  wandb_project: "WheeledLab"
+  no_log: false
+  test_mode: false
+  log_policy_camera: true
+  policy_camera_sensor_name: "camera"
+  policy_camera_env_id: 0
+  policy_camera_fps: 5

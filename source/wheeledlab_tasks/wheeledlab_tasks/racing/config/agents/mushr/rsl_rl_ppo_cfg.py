@@ -1,3 +1,5 @@
+import dataclasses
+
 from isaaclab.utils import configclass
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
@@ -67,6 +69,31 @@ class MushrRNNPolicyCfg:
 
 
 # ---------------------------------------------------------------------------
+# Policy dispatch — picks the wrapper configclass from YAML `class_name`
+# so swapping architectures across runs needs no in-code edits.
+# ---------------------------------------------------------------------------
+_POLICY_CFG_BY_NAME = {
+    "ActorCritic":          MushrMLPPolicyCfg,
+    "ActorCriticCNN":       MushrCNNPolicyCfg,
+    "ActorCriticRecurrent": MushrRNNPolicyCfg,
+    "ActorCriticCNNGRU":    MushrCNNGRUPolicyCfg,
+}
+
+
+def _build_policy_cfg(pol: dict):
+    name = pol["class_name"]
+    if name not in _POLICY_CFG_BY_NAME:
+        raise KeyError(
+            f"Unknown policy class_name {name!r}. "
+            f"Known: {sorted(_POLICY_CFG_BY_NAME)}"
+        )
+    cls = _POLICY_CFG_BY_NAME[name]
+    fields = {f.name for f in dataclasses.fields(cls)}
+    kwargs = {k: v for k, v in pol.items() if k in fields}
+    return cls(**kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Runner Config
 # ---------------------------------------------------------------------------
 @configclass
@@ -77,23 +104,9 @@ class MushrPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = _PPO["save_interval"]
     experiment_name = _PPO["experiment_name"]
 
-    # Swap policy via name above
+    # Wrapper class is dispatched from YAML `policy.class_name`.
     empirical_normalization = _PPO["empirical_normalization"]
-    policy = MushrMLPPolicyCfg(
-        class_name=_POL["class_name"],
-        init_noise_std=float(_POL["init_noise_std"]),
-        activation=_POL["activation"],
-        actor_hidden_dims=list(_POL["actor_hidden_dims"]),
-        critic_hidden_dims=list(_POL["critic_hidden_dims"]),
-        # image_shape=tuple(_POL["image_shape"]),
-        # cnn_channels=list(_POL["cnn_channels"]),
-        # cnn_kernel_sizes=list(_POL["cnn_kernel_sizes"]),
-        # cnn_strides=list(_POL["cnn_strides"]),
-        # cnn_out_dim=int(_POL["cnn_out_dim"]),
-        # rnn_type=_POL["rnn_type"],
-        # rnn_hidden_dim=int(_POL["rnn_hidden_dim"]),
-        # rnn_num_layers=int(_POL["rnn_num_layers"]),
-    )
+    policy = _build_policy_cfg(_POL)
 
     # PPO algo hyperparameter
     algorithm = RslRlPpoAlgorithmCfg(

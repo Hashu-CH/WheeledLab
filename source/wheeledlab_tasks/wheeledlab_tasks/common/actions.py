@@ -18,7 +18,7 @@ class MushrRWDActionCfg:
         base_width=0.2,
         wheel_radius=0.05,
         scale=(3.0, 0.488),
-        no_reverse=True,
+        no_reverse=False,
         bounding_strategy="clip",
         asset_name="robot",
     )
@@ -42,7 +42,7 @@ class Mushr4WDActionCfg:
         base_width=0.2,
         wheel_radius=0.05,
         scale=(3.0, 0.488),
-        no_reverse=True,
+        no_reverse=False,
         bounding_strategy="clip",
         asset_name="robot",
     )
