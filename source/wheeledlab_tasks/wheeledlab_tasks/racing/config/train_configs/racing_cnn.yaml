@@ -1,13 +1,13 @@
-# Sweep run: MLP actor-critic. Differs from _base.yaml only at marked lines.
+# Sweep run: CNN + MLP actor-critic. Differs from _base.yaml only at marked lines.
 run:
-  num_envs: 128        # parallel envs (envs == num tracks)
-  num_iterations: 3000 # upper bound training steps
+  num_envs: 64        # parallel envs (envs == num tracks)
+  num_iterations: 1000 # upper bound training steps
 
 env:
   seed: 67
   episode_length_s: 20
-  sim_dt: 0.02
-  decimation: 10
+  sim_dt: 0.01
+  decimation: 5
 
 terrain:
   env_num_rows: 50
@@ -23,18 +23,18 @@ terrain:
   margin_frac: 0.1
 
 ppo:
-  num_steps_per_env: 128
+  num_steps_per_env: 256
   max_iterations: 4000
   save_interval: 50
-  experiment_name: "mushr_ppo_racing_mlp"   # SWEEP-DIFF
+  experiment_name: "mushr_ppo_racing_cnn"   # SWEEP-DIFF
   empirical_normalization: false
   algorithm:
-    value_loss_coef: 3.0
+    value_loss_coef: 2
     use_clipped_value_loss: true
     clip_param: 0.2
     entropy_coef: 0.01
     num_learning_epochs: 4
-    num_mini_batches: 2               # lowered from 4 — keeps batch size reasonable at 128 envs
+    num_mini_batches: 1 # if memeory allows increase in envs can inc this
     learning_rate: 5.0e-4
     schedule: "adaptive"
     gamma: 0.99
@@ -43,16 +43,16 @@ ppo:
     max_grad_norm: 1.0
 
 policy:
-  class_name: "ActorCritic"                 # SWEEP-DIFF
+  class_name: "ActorCriticCNN"                 # SWEEP-DIFF
   init_noise_std: 1
   activation: "relu"
   actor_hidden_dims: [64, 64]
   critic_hidden_dims: [64, 64]
   image_shape: [1, 40, 80]
-  cnn_channels: [16, 32]
+  cnn_channels: [8, 16]                        # SWEEP-DIFF: halved from (16,32) for memory
   cnn_kernel_sizes: [5, 3]
   cnn_strides: [2, 2]
-  cnn_out_dim: 64
+  cnn_out_dim: 32                              # SWEEP-DIFF: halved from 64
   rnn_type: "gru"
   rnn_hidden_dim: 128
   rnn_num_layers: 1
@@ -60,6 +60,7 @@ policy:
 rewards:
   progress_rew_weight: 1.0
   time_step_pen_weight: -0.01
+  off_track_pen_weight: -0.1
   goal_reached_rew_weight: 5.0
   out_of_tile_pen_weight: -10.0
   tangential_speed_weight: 1.5
@@ -71,7 +72,7 @@ rewards:
 
 goals:
   loop_dist_frac_range: [0.1, 0.95]
-  off_track_wheel_threshold: 2
+  off_track_wheel_threshold: 1
   goal_reached_eps_m: 0.5
   progress_clamp_m: 2.0
 

@@ -3,9 +3,12 @@ Loader for the racing task's YAML hyperparameter file.
 
 The YAML is resolved in this order:
   1. $WHEELEDLAB_RACING_CONFIG if set
-  2. the sibling `racing_config.yaml` in this directory
+  2. fall back to `train_configs/racing_default.yaml`
 
-Used by train.sh
+Layout:
+  config/
+    train_configs/   # default + sweep training configs (used by run_sweep.sh)
+    eval_configs/    # eval-only variants (used by eval_configs/eval.sh)
 """
 
 import os
@@ -13,9 +16,11 @@ import yaml
 from functools import lru_cache
 
 
-# just specify new path in train.sh to point to custom yaml file for large tunes
+# run_sweep.sh / eval.sh set this env var to pick the active YAML.
 ENV_VAR = "WHEELEDLAB_RACING_CONFIG"
-_DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "racing_config.yaml")
+_DEFAULT_PATH = os.path.join(
+    os.path.dirname(__file__), "train_configs", "racing_default.yaml"
+)
 _REQUIRED_SECTIONS = (
     "run", "logging", "ppo", "policy", "env", "terrain",
     "rewards", "events", "observations",

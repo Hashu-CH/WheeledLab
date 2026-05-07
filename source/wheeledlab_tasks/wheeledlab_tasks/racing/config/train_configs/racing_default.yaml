@@ -1,18 +1,15 @@
-# For ablation test
-
-
-
+# default yam file for hyper parameters
 # Training Variables
 run:
-  num_envs: 512        # parallel envs (envs == num tracks)
+  num_envs: 256        # parallel envs (envs == num tracks)
   num_iterations: 1000 # upper bound training steps
 
 # Running Environment Variables
 env:
   seed: 67             # env RNG seed
   episode_length_s: 20 # max episode length (seconds)
-  sim_dt: 0.02         # physics timestep (seconds)
-  decimation: 10       # physics steps per policy step
+  sim_dt: 0.01         # physics timestep (seconds)
+  decimation: 5        # physics steps per policy step
 
 # Terrain Layout Variables
 terrain:
@@ -33,7 +30,7 @@ terrain:
 
 # PPO Parameters
 ppo:
-  num_steps_per_env: 128              # rollout length before update
+  num_steps_per_env: 256              # rollout length before update
   max_iterations: 4000                # runner cap (overridden by run.num_iterations)
   save_interval: 50                   # save checkpoint interval
   experiment_name: "mushr_ppo_racing_mlp_vel" # ======= CHANGE THIS BETWEEN RUNS ========
@@ -76,6 +73,7 @@ policy:
 rewards:
   progress_rew_weight: 1.0
   time_step_pen_weight: -0.01
+  off_track_pen_weight: -0.1
   goal_reached_rew_weight: 5.0 
   out_of_tile_pen_weight: -10.0
 
@@ -90,7 +88,7 @@ rewards:
 # Goal Oriented Reward Parameters
 goals:
   loop_dist_frac_range: [0.1, 0.95]
-  off_track_wheel_threshold: 2
+  off_track_wheel_threshold: 1
   goal_reached_eps_m: 0.5
   progress_clamp_m: 2.0
 

@@ -13,7 +13,7 @@ HOUND_ACTUATOR_CFG = {
     "throttle_joints": DCMotorCfg(
         joint_names_expr=[".*throttle"],
         saturation_effort=1.05,
-        effort_limit=0.25,
+        effort_limit=0.4,
         velocity_limit=450.,
         stiffness=0,
         damping=1000.,

@@ -115,7 +115,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     row_spacing, col_spacing = spacing
     env_num_rows, env_num_cols = env_size
 
-    # Convention: col -> x, row -> y. Matches the racing_config.yaml comments
+    # Convention: col -> x, row -> y. Matches the racing_default.yaml comments
     # ("world tile width = env_num_cols * col_spacing", etc.).
     width = num_cols * col_spacing   # x-extent
     height = num_rows * row_spacing  # y-extent

@@ -199,6 +199,17 @@ def time_step_penalty(env):
     return torch.ones(env.num_envs, device=env.device)
 
 
+def off_track_penalty(env, off_track_wheel_threshold: int = 3):
+    """Per-step cost while too many wheels are off track.
+
+    Pairs with progress_reward's gating: when progress is gated to 0, you also
+    pay this fixed cost. Returns a positive value (1 when off, 0 when on);
+    sign comes from the (negative) weight in RacingRewardsCfg.
+    """
+    on_track = on_track_mask(env, off_track_wheel_threshold)
+    return (~on_track).float()
+
+
 # ---------------------------------------------------------------------------
 # Reward manager config
 # ---------------------------------------------------------------------------
@@ -216,6 +227,14 @@ class RacingRewardsCfg:
     time_step_pen = RewTerm(
         func=time_step_penalty,
         weight=float(_RW["time_step_pen_weight"]),
+    )
+
+    off_track_pen = RewTerm(
+        func=off_track_penalty,
+        weight=float(_RW["off_track_pen_weight"]),
+        params={
+            "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
+        },
     )
 
     goal_reached_rew = RewTerm(
