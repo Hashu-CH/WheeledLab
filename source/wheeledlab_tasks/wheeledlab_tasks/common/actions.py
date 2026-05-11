@@ -41,7 +41,7 @@ class Mushr4WDActionCfg:
         base_length=0.325,
         base_width=0.2,
         wheel_radius=0.05,
-        scale=(6.0, 0.488),
+        scale=(4.0, 0.488),
         no_reverse=False,
         bounding_strategy="clip",
         asset_name="robot",
