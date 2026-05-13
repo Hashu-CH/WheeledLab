@@ -3,16 +3,8 @@ Reward functions and RewardsCfg for the Racing Task.
 
 Notes:
 
-- The reward manager invokes each function per step and composes them as
-  sum(weight_k * term_k). We rely on the env_id == tile_id invariant set up in
+- We rely on the env_id == tile_id invariant set up in
   events.py so each env's reward reads from its own cached polyline.
-- progress_reward, time_step_penalty, off_track_penalty, and the goal_reached
-  termination consume compute_progress_step(env), a per-step memoized result
-  shared so the polyline projection + state advance happens exactly once per
-  env step regardless of who reads first.
-- "On-track" is checked via the rendered rasterised traversability grid
-  queried per-wheel (wheels_off_track in the terrain importer). The grid is
-  the source of truth for what the camera sees.
 """
 
 import torch
@@ -92,7 +84,7 @@ def on_track_mask(env, off_track_wheel_threshold):
 # Reward Terms
 # ---------------------------------------------------------------------------
 def progress_reward(env, gamma: float = 0.99):
-    """Potential-based shaping (PBRS) fucntion on track progress.
+    """Potential-based shaping (PBRS) on track progress.
 
     Args:
     - env: the running environment
@@ -150,7 +142,8 @@ class RacingRewardsCfg:
             "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
         },
     )
-
+  
+    # Termination reward for reaching finish lap
     goal_reached_rew = RewTerm(
         func=mdp.rewards.is_terminated_term,
         weight=float(_RW["goal_reached_rew_weight"]),
