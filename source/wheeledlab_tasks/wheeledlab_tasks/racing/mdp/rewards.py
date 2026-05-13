@@ -92,31 +92,21 @@ def on_track_mask(env, off_track_wheel_threshold):
 # Reward Terms
 # ---------------------------------------------------------------------------
 def progress_reward(env, gamma: float = 0.99):
-    """Potential-based shaping (PBRS) on track progress.
-
-    Potential: Phi(s) = -dist_to_finish(s). PBRS form:
-        F(s, s') = gamma * Phi(s') - Phi(s)
-                 = prev_dist - gamma * curr_dist
-    Telescopes to Phi(s_T) - Phi(s_0) over a full episode, so total shaping is
-    policy-invariant in the Ng/Harada/Russell sense; the agent can't game it
-    via cycles or corner-cuts within an episode.
-
-    Wraparound: dist_to_finish is modular (mod total_length), so when the car
-    crosses the goal, curr_dist snaps from ~0 to ~total. Without correction,
-    the PBRS term blows up negatively at exactly the moment of victory. We
-    detect the wrap with the same heuristic as goal_reached (prev - curr >
-    total / 2) and substitute Phi(s')=0 (i.e. shaping = prev_dist) so the
-    crossing step gets the legitimate remaining-distance progress.
+    """Potential-based shaping (PBRS) fucntion on track progress.
 
     Args:
     - env: the running environment
     - gamma: discount factor; should match PPO's gamma for the PBRS invariance
       guarantee to hold.
     """
+    # Φ(s) = total - dist(s) (≥ 0, grows toward goal). Equivalent to Φ = -dist up
+    # to a constant — PBRS-invariant — but makes per-step idling reward
+    # -(1-γ)·(total - dist) ≤ 0 instead of +(1-γ)·dist ≥ 0, so the critic can't
+    # learn a positive-value plateau over stationary states.
     _, curr_dist, prev_dist = compute_progress_step(env)
     total = env.scene.terrain._total_lengths_t.clamp_min(1e-6)
     wrap = (prev_dist - curr_dist) > 0.5 * total
-    pbrs = prev_dist - gamma * curr_dist
+    pbrs = prev_dist - gamma * curr_dist - (1.0 - gamma) * total
     return torch.where(wrap, prev_dist, pbrs)
 
 
