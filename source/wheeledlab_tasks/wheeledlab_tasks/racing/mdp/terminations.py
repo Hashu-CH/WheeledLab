@@ -50,7 +50,7 @@ def goal_reached(env, eps_m: float = 0.5, off_track_wheel_threshold: int = 3):
     """
     _, curr_dist, prev_dist = compute_progress_step(env)
     terrain = env.scene.terrain
-    total = terrain._total_lengths_t.clamp_min(1e-6)
+    total = terrain._total_lengths_t[:env.num_envs].clamp_min(1e-6)
     arrived = curr_dist < eps_m
     overshoot = (prev_dist - curr_dist) > 0.5 * total
     on_track = on_track_mask(env, off_track_wheel_threshold)

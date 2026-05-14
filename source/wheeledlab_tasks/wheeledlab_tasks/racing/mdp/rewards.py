@@ -96,7 +96,7 @@ def progress_reward(env, gamma: float = 0.99):
     # -(1-γ)·(total - dist) ≤ 0 instead of +(1-γ)·dist ≥ 0, so the critic can't
     # learn a positive-value plateau over stationary states.
     _, curr_dist, prev_dist = compute_progress_step(env)
-    total = env.scene.terrain._total_lengths_t.clamp_min(1e-6)
+    total = env.scene.terrain._total_lengths_t[:env.num_envs].clamp_min(1e-6)
     wrap = (prev_dist - curr_dist) > 0.5 * total
     pbrs = prev_dist - gamma * curr_dist - (1.0 - gamma) * total
     return torch.where(wrap, prev_dist, pbrs)
