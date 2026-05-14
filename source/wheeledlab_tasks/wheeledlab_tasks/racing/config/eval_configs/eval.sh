@@ -2,7 +2,7 @@
 # testing script
 #
 # Usage:
-#   bash ./source/wheeledlab_tasks/wheeledlab_tasks/racing/config/eval_configs/eval.sh -p ./source/wheeledlab_rl/logs/cnn ./source/wheeledlab_rl/logs/cnnrnn --seeds 0 1 2
+#   bash ./source/wheeledlab_tasks/wheeledlab_tasks/racing/config/eval_configs/eval.sh -p ./source/wheeledlab_rl/logs/cnn ./source/wheeledlab_rl/logs/cnnrnn --num-tracks 256 --seeds 0 1 2
 
 set -eo pipefail
 

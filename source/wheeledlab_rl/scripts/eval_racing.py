@@ -195,11 +195,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
         # Re-seed RNGs so spawn poses and goal draws are identical across policies
         # for the same seed value, then reset the env to apply them.
+        # Reset must run inside inference_mode because the previous rollout left
+        # env-internal tensors as inference tensors; inplace writes outside that
+        # context are rejected by PyTorch.
         np.random.seed(seed)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-        obs, _ = env.reset()
+        with torch.inference_mode():
+            obs, _ = env.reset()
 
         runner = OnPolicyRunner(env, policy_agent_cfg.to_dict(), log_dir=None, device=device)
         runner.load(ckpt_path)
@@ -336,16 +340,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
               f"mean_adj_finishers={mean_adj_finishers:.2f}s "
               f"(±{std_across_seeds:.2f}s across seeds)  "
               f"mean_with_dnf={mean_with_dnf:.2f}s")
-
-        if wandb_run is not None:
-            wandb.log({
-                f"{name}/finish_rate": finish_rate,
-                f"{name}/mean_lap_time_finishers_s": mean_lap_finishers,
-                f"{name}/mean_oob_time_finishers_s": mean_oob_finishers,
-                f"{name}/mean_adjusted_time_finishers_s": mean_adj_finishers,
-                f"{name}/std_across_seeds_s": std_across_seeds,
-                f"{name}/mean_adjusted_with_dnf_s": mean_with_dnf,
-            })
 
     # ---- Save CSVs ----
     summary_csv = os.path.join(args_cli.out, "summary.csv")

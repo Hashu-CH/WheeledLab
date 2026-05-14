@@ -6,7 +6,7 @@
 
 env:
   seed: 67                # overridden by eval_racing.py --seeds / --seed
-  episode_length_s: 20    # affects max_steps cap and DNF penalty time
+  episode_length_s: 40    # affects max_steps cap and DNF penalty time
   sim_dt: 0.01
   decimation: 5
 
