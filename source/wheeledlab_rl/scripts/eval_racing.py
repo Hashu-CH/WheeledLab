@@ -50,6 +50,7 @@ simulation_app, args_cli = startup(parser=parser)
 
 import os
 import csv
+import glob
 import gymnasium as gym
 import torch
 from tqdm import tqdm
@@ -60,7 +61,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from isaaclab.utils.io import load_pickle
-from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
@@ -82,14 +82,17 @@ def _load_run_cfg(run_path: str) -> RunConfig:
 
 
 def _resolve_checkpoint(run_path: str, checkpoint: int | None) -> str:
-    chkpt = checkpoint if checkpoint is not None else ".*"
-    fp = os.path.abspath(run_path)
-    return get_checkpoint_path(
-        log_path=os.path.dirname(fp),
-        run_dir=os.path.basename(fp),
-        other_dirs=["models"],
-        checkpoint=chkpt,
-    )
+    import glob
+    models_dir = os.path.join(os.path.abspath(run_path), "models")
+    if checkpoint is not None:
+        path = os.path.join(models_dir, f"model_{checkpoint}.pt")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Checkpoint {checkpoint} not found in {models_dir}")
+        return path
+    files = glob.glob(os.path.join(models_dir, "model_*.pt"))
+    if not files:
+        raise FileNotFoundError(f"No checkpoints found in {models_dir}")
+    return max(files, key=lambda f: int(os.path.splitext(os.path.basename(f))[0].split("_")[1]))
 
 
 _first_run_cfg = _load_run_cfg(args_cli.run_paths[0])

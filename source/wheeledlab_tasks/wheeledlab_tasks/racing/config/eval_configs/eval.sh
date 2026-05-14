@@ -2,8 +2,7 @@
 # testing script
 #
 # Usage:
-# just run from eval_configs dir or else the paths are so long
-#   bash eval.sh -p ./cnn.pt ./cnnrnn.pt --seeds 0 1 2
+#   bash ./source/wheeledlab_tasks/wheeledlab_tasks/racing/config/eval_configs/eval.sh -p ./source/wheeledlab_rl/logs/cnn ./source/wheeledlab_rl/logs/cnnrnn --seeds 0 1 2
 
 set -eo pipefail
 
