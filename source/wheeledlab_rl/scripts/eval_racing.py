@@ -152,7 +152,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
     # ---- Resolve seed list ----
     seeds = args_cli.seeds if args_cli.seeds is not None else [args_cli.seed]
-    print(f"[eval] seeds: {seeds}  ({len(seeds)} env builds per policy)")
+    print(f"[eval] seeds: {seeds}  ({len(seeds)} seed(s), terrain fixed to seed {seeds[0]})")
+
+    # ---- Build env once; closing it shuts down the simulation app singleton ----
+    # Terrain geometry is generated from seeds[0]. Subsequent seeds re-randomize
+    # spawn poses and goal draws (via env.reset() with re-seeded RNGs) but share
+    # the same track geometry.
+    env = _build_env(env_cfg, seeds[0])
+    device = env.unwrapped.device
 
     # ---- Wandb (driven by YAML logging:, same pattern as train_rl.py) ----
     log_cfg = RACING_CONFIG.get("logging", {})
@@ -177,6 +184,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
     # ---- Helper: run one (seed, policy) combo, append per-track rows ----
     def _eval_one(seed: int, run_path: str, per_track_rows: list):
+        import numpy as np
         policy_name = os.path.basename(os.path.normpath(run_path))
         print(f"\n[eval] === seed={seed}  policy={policy_name} ===")
 
@@ -185,10 +193,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
         ckpt_path = _resolve_checkpoint(run_path, args_cli.checkpoint)
         print(f"[eval] checkpoint: {ckpt_path}")
 
-        # Fresh env with this seed. _build_env pins numpy + torch + env_cfg.seed
-        # so every policy in this iteration sees identical tracks/spawns/finishes.
-        env = _build_env(env_cfg, seed)
-        device = env.unwrapped.device
+        # Re-seed RNGs so spawn poses and goal draws are identical across policies
+        # for the same seed value, then reset the env to apply them.
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        obs, _ = env.reset()
 
         runner = OnPolicyRunner(env, policy_agent_cfg.to_dict(), log_dir=None, device=device)
         runner.load(ckpt_path)
@@ -207,8 +218,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
         except AttributeError:
             term_names = list(getattr(term_mgr, "active_terms", []))
         print(f"[eval] termination terms: {term_names}")
-
-        obs, _ = env.get_observations()
 
         with torch.inference_mode():
             for _ in tqdm(range(max_steps), desc=f"seed={seed} {policy_name}"):
@@ -260,8 +269,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
                 "checkpoint": ckpt_path,
             })
 
-        env.close()
-        del env, runner, policy
+        del runner, policy
         return policy_name
 
     # ---- Outer seed loop, inner policy loop ----
