@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# testing script 
+# testing script
 #
 # Usage:
 # just run from eval_configs dir or else the paths are so long
-#   bash eval.sh -p [./cnn.pt ./cnnrnn.pt] --seeds 0 1 2
+#   bash eval.sh -p ./cnn.pt ./cnnrnn.pt --seeds 0 1 2
 
 set -eo pipefail
 
@@ -26,15 +26,4 @@ source setup_conda_env.sh
 
 cd "$WHEELEDLAB_ROOT"
 
-# If user passed bare run paths (no -p), prepend -p to each path-looking arg.
-# Heuristic: any arg that starts with / or ./ and is a directory.
-ARGS=()
-for a in "$@"; do
-  if [[ -d "$a" ]]; then
-    ARGS+=("-p" "$a")
-  else
-    ARGS+=("$a")
-  fi
-done
-
-python source/wheeledlab_rl/scripts/eval_racing.py --headless "${ARGS[@]}"
+python source/wheeledlab_rl/scripts/eval_racing.py --headless "$@"
