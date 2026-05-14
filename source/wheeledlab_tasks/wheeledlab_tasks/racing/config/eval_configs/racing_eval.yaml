@@ -51,6 +51,23 @@ logging:                  # eval_racing.py reads no_wandb / wandb_project / wand
   no_wandb: false                      # set true to disable wandb at eval
   wandb_project: "WheeledLab"
   wandb_group: "eval"
+  # --- training-only keys below: unused at eval, but required because importing
+  #     wheeledlab_rl.configs builds RSS_RACING_CONFIG at import time, which reads
+  #     every one of these from logging: (see rss_cfgs.py). Keep the section complete. ---
+  video: false
+  video_length: 500
+  video_interval: 15000
+  video_resolution: [1280, 720]
+  video_crf: 30
+  log_every: 10
+  checkpoint_every: 1000
+  no_checkpoints: false
+  no_log: false
+  test_mode: false
+  log_policy_camera: false
+  policy_camera_sensor_name: "camera"
+  policy_camera_env_id: 0
+  policy_camera_fps: 5
 
 # =============================================================================
 # None of these matter for evals
