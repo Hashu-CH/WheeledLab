@@ -48,7 +48,7 @@ policy:
   activation: "relu"
   actor_hidden_dims: [64, 64]
   critic_hidden_dims: [64, 64]
-  image_shape: [1, 40, 80]
+  image_shape: [3, 40, 80]
   cnn_channels: [8, 16]                        # SWEEP-DIFF: halved from (16,32) for memory
   cnn_kernel_sizes: [5, 3]
   cnn_strides: [2, 2]

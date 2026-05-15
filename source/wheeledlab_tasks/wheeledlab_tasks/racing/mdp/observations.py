@@ -44,21 +44,24 @@ class RacingObsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         """
-        [camera, vx, vy, vz, wx, wy, wz, action1(vel), action2(steering)]
+        VISION-ONLY: [camera (3×40×80 RGB flattened)]
+        Restore: uncomment base_lin_vel, base_ang_vel, last_action below.
         """
         camera = ObsTerm(
             func=mdp_sensors.camera_data_rgb_flattened_aug,
             params={"sensor_cfg": SceneEntityCfg("camera")},
         )
 
-        # simulate IMU readings
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=_unoise("base_lin_vel_noise"))
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=_unoise("base_ang_vel_noise"))
-        last_action = ObsTerm(
-            func=mdp.last_action,
-            clip=tuple(_OBS["last_action_clip"]),
-            noise=_unoise("last_action_noise"),
-        )
+        # VISION-ONLY: proprioceptive terms commented out.
+        # To restore vision+IMU, uncomment the three blocks below and update
+        # image_shape obs_dim in rl_hl_control.py (image_dim + 8 instead of image_dim).
+        # base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=_unoise("base_lin_vel_noise"))
+        # base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=_unoise("base_ang_vel_noise"))
+        # last_action = ObsTerm(
+        #     func=mdp.last_action,
+        #     clip=tuple(_OBS["last_action_clip"]),
+        #     noise=_unoise("last_action_noise"),
+        # )
 
         def __post_init__(self) -> None:
             self.enable_corruption = bool(_OBS["enable_corruption"])

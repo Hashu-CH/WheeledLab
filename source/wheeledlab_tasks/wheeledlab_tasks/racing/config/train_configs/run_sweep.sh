@@ -1,10 +1,19 @@
 # training script
-# Each run takes like an hour or two to converge. 
-# It's helpful to be able to queue multiple at once. 
+# Each run takes like an hour or two to converge.
+# It's helpful to be able to queue multiple at once.
 #
 # Usage:
 #   bash run_sweep.sh                  # both archs (cnn, cnn_rnn)
 #   ARCHS=cnn bash run_sweep.sh        # subset (single arch)
+#
+# VISION-ONLY MODE (current):
+#   Obs = RGB image only (3×40×80 = 9600). No IMU/velocity/last-action.
+#   To revert to vision+IMU (obs_dim = 9608):
+#     1. mdp/observations.py       — uncomment base_lin_vel, base_ang_vel, last_action
+#     2. RealLab/src/rl_hl_control.py — set obs_dim = image_dim + 8,
+#                                       include_last_action = True,
+#                                       last_action_offset = image_dim + 6,
+#                                       uncomment twists line in obtain_racing_state
 
 set -euo pipefail
 

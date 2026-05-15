@@ -36,6 +36,14 @@ from ..config import CONFIG
 
 _TER = CONFIG["terrain"]
 
+# Absolute paths to cone USDA assets (4 levels up from this file → source/ → wheeledlab_assets)
+_CONES_DIR = os.path.realpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..",
+                 "wheeledlab_assets", "data", "cones")
+)
+_ORANGE_CONE_USD = os.path.join(_CONES_DIR, "orange_cone.usda")
+_BLUE_CONE_USD   = os.path.join(_CONES_DIR, "blue_cone.usda")
+
 
 # ---------------------------------------------------------------------------
 # Per-tile track geometry cache
@@ -65,6 +73,98 @@ class TrackCache:
     traversability_grid: np.ndarray # (num_rows, num_cols), bool, True = on-track (drivable)
     world_origin_xy_m: tuple[float, float] # world-meter coords of grid cell (0, 0) corner: (-width/2, -height/2)
     cell_size_m: tuple[float, float] # (col_spacing, row_spacing) for world<->cell conversion
+
+
+# ---------------------------------------------------------------------------
+# Cone placement helpers
+# ---------------------------------------------------------------------------
+
+def _compute_cone_positions(
+    polyline_w: np.ndarray,       # (M, 2) world-meter centerline
+    track_width_m: float,
+    cone_spacing_m: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (left_positions, right_positions) arrays of shape (N, 2).
+
+    Left/right are defined relative to the direction of travel along the
+    centerline. Left = 90° CCW from tangent, right = 90° CW.
+    Positions are subsampled at approximately cone_spacing_m arc-length intervals.
+    """
+    if len(polyline_w) < 2:
+        return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+
+    half = track_width_m / 2.0
+
+    # Arc-length prefix sum along centerline
+    diffs = np.diff(polyline_w, axis=0)                         # (M-1, 2)
+    seg_lens = np.linalg.norm(diffs, axis=1)                    # (M-1,)
+    cum_len = np.concatenate([[0.0], np.cumsum(seg_lens)])       # (M,)
+    total_len = cum_len[-1]
+    if total_len < cone_spacing_m:
+        return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+
+    # Sample positions at regular arc-length intervals
+    sample_arcs = np.arange(0.0, total_len, cone_spacing_m)
+    sample_pts  = np.stack([
+        np.interp(sample_arcs, cum_len, polyline_w[:, 0]),
+        np.interp(sample_arcs, cum_len, polyline_w[:, 1]),
+    ], axis=1)                                                   # (N, 2)
+
+    # Tangent at each sample via finite difference on the resampled points
+    tan = np.diff(sample_pts, axis=0)                           # (N-1, 2)
+    tan_norm = np.linalg.norm(tan, axis=1, keepdims=True)
+    tan_norm = np.where(tan_norm > 0, tan_norm, 1.0)
+    tan = tan / tan_norm                                         # unit tangents
+    # Duplicate last tangent so shapes align with sample_pts
+    tan = np.concatenate([tan, tan[[-1]]], axis=0)              # (N, 2)
+
+    # Left normal = CCW 90°: (tx, ty) -> (-ty, tx)
+    left_n  = np.stack([-tan[:, 1],  tan[:, 0]], axis=1)
+    right_n = np.stack([ tan[:, 1], -tan[:, 0]], axis=1)
+
+    left_pos  = sample_pts + half * left_n
+    right_pos = sample_pts + half * right_n
+
+    return left_pos.astype(np.float32), right_pos.astype(np.float32)
+
+
+def _spawn_cones_in_stage(
+    stage: Usd.Stage,
+    left_positions_per_tile:  list[np.ndarray],   # list of (N_i, 2) float32
+    right_positions_per_tile: list[np.ndarray],
+) -> None:
+    """Add orange (left) and blue (right) cone USD references to the stage."""
+    if not os.path.isfile(_ORANGE_CONE_USD):
+        import warnings
+        warnings.warn(
+            f"Orange cone asset not found at {_ORANGE_CONE_USD}. "
+            "Skipping cone spawning — run wheeledlab_assets/data/cones/generate_cones.py first."
+        )
+        return
+    if not os.path.isfile(_BLUE_CONE_USD):
+        import warnings
+        warnings.warn(
+            f"Blue cone asset not found at {_BLUE_CONE_USD}. "
+            "Skipping cone spawning."
+        )
+        return
+
+    UsdGeom.Xform.Define(stage, "/World/cones")
+
+    for tile_idx, (left_pos, right_pos) in enumerate(
+        zip(left_positions_per_tile, right_positions_per_tile)
+    ):
+        for ci, (px, py) in enumerate(left_pos):
+            prim_path = f"/World/cones/orange_t{tile_idx}_c{ci}"
+            xf = UsdGeom.Xform.Define(stage, prim_path)
+            xf.AddTranslateOp().Set(Gf.Vec3d(float(px), float(py), 0.0))
+            xf.GetPrim().GetReferences().AddReference(_ORANGE_CONE_USD)
+
+        for ci, (px, py) in enumerate(right_pos):
+            prim_path = f"/World/cones/blue_t{tile_idx}_c{ci}"
+            xf = UsdGeom.Xform.Define(stage, prim_path)
+            xf.AddTranslateOp().Set(Gf.Vec3d(float(px), float(py), 0.0))
+            xf.GetPrim().GetReferences().AddReference(_BLUE_CONE_USD)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +271,9 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     tile_is_closed: list[bool] = [] # True for closed-loop tracks (phase 2)
     tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
     tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
+    cone_spacing_m = float(_TER.get("cone_spacing_m", 1.5))
+    left_boundary_positions: list[np.ndarray] = []
+    right_boundary_positions: list[np.ndarray] = []
 
     # Generate per env tracks and fills track data cache
     for i in range(num_env_rows):
@@ -203,8 +306,15 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
 
             # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
             # means the effective corridor is ~= track_width * spacing).
-            tile_track_widths_m.append(float(config.track_width) * row_spacing)
+            tile_w_m = float(config.track_width) * row_spacing
+            tile_track_widths_m.append(tile_w_m)
             tile_is_closed.append(not config.is_chain)
+
+            left_pos, right_pos = _compute_cone_positions(
+                tile_polylines_w[-1], tile_w_m, cone_spacing_m
+            )
+            left_boundary_positions.append(left_pos)
+            right_boundary_positions.append(right_pos)
 
             # Tile origin: world-meter center of the tile. Stored for viz /
             # debug; not currently used at runtime — see TODO in
@@ -276,7 +386,8 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     for color in face_colors:
         face_colors_triangle += [color, color]
 
-    return vertices, faces, face_counts, face_colors_triangle, track_cache
+    return vertices, faces, face_counts, face_colors_triangle, track_cache, \
+        left_boundary_positions, right_boundary_positions
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +419,7 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
 
     plane = UsdGeom.Mesh.Define(stage, '/World/colored_plane')
 
-    vertices, faces, face_counts, face_colors, track_cache = \
+    vertices, faces, face_counts, face_colors, track_cache, left_pos, right_pos = \
         generated_colored_track_plane(map_size, spacing, env_size, color_sampling)
 
     plane.GetPointsAttr().Set(vertices)
@@ -319,6 +430,8 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
     UsdPhysics.MeshCollisionAPI.Apply(xform.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(plane.GetPrim())
     UsdPhysics.CollisionGroup.Define(stage, "/World/colored_plane/collision_group")
+
+    _spawn_cones_in_stage(stage, left_pos, right_pos)
 
     stage.GetRootLayer().Save()
 

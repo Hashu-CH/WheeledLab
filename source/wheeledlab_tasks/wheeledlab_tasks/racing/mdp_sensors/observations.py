@@ -6,8 +6,8 @@ TODO: wire the hyperparams from somewhere else.
 
 Notes:
 
-- Current domain randomizations applied: Jitter and Blur
-- No depth camera or RGB utilized -- images are converted to grayscale
+- Domain randomizations applied: ColorJitter (hue covers cone color variation), GaussianBlur
+- RGB output (3 channels) — color is the primary left/right boundary cue (orange vs blue cones)
 """
 
 
@@ -26,13 +26,13 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Sensor Helpers 
+# Sensor Helpers
 # ---------------------------------------------------------------------------
 
-# Defining all the transformations to apply to camera inputs
-grayscale = transforms.Grayscale()
-gray_normalize = transforms.Normalize([0.5], [0.5])
-color_jitter = transforms.ColorJitter(brightness=0.8, contrast=0.2, saturation=0.8, hue=0.5)
+# Hue jitter ±0.3 covers cone color variation (dirty/faded cones, lighting shifts).
+# Grayscale step removed — color is load-bearing for left (orange) vs right (blue) boundary.
+rgb_normalize = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+color_jitter = transforms.ColorJitter(brightness=0.8, contrast=0.2, saturation=0.8, hue=0.3)
 gaussian_blur = transforms.GaussianBlur(5, sigma=(0.1, 5.0))
 
 
@@ -45,5 +45,5 @@ def camera_data_rgb_flattened_aug(env: ManagerBasedEnv, sensor_cfg: SceneEntityC
     images = images.permute(0, 3, 1, 2).float() / 255.
     images = color_jitter(images)
     images = gaussian_blur(images)
-    normalized_imgs = gray_normalize(grayscale(images))
+    normalized_imgs = rgb_normalize(images)
     return normalized_imgs.reshape(B, -1)

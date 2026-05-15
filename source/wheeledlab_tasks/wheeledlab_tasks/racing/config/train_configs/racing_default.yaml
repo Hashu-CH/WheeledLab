@@ -24,9 +24,10 @@ terrain:
   car_width_m: 0.28 
   difficulty_range: [0, .9]
   phase_boundary: 0.0  # threshold for chains -> closed loops
-  track_width_cells: 5 
+  track_width_cells: 5
   steps_per_segment: 40
   margin_frac: 0.1
+  cone_spacing_m: 1.5
 
 # PPO Parameters
 ppo:
@@ -58,7 +59,7 @@ policy:
   critic_hidden_dims: [64, 64]
 
   # Obs output is 60,80 with 20 top cropped
-  image_shape: [1, 40, 80]
+  image_shape: [3, 40, 80]
   cnn_channels: [16, 32]
   cnn_kernel_sizes: [5, 3]
   cnn_strides: [2, 2]

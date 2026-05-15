@@ -15,6 +15,7 @@ Notes:
 """
 
 import torch
+import numpy as np
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.utils.math as math_utils
@@ -102,6 +103,57 @@ def init_progress_state(
 
 
 # ---------------------------------------------------------------------------
+# Lighting randomization
+# ---------------------------------------------------------------------------
+
+def randomize_lighting(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    light_prim_path: str = "/World/light",
+    intensity_range: tuple = (1500.0, 6000.0),
+    elevation_deg_range: tuple = (10.0, 45.0),
+    azimuth_deg_range: tuple = (0.0, 360.0),
+    color_r_range: tuple = (0.9, 1.0),
+    color_g_range: tuple = (0.7, 1.0),
+    color_b_range: tuple = (0.5, 1.0),
+):
+    """Randomize the scene's distant light each episode to simulate variable
+    outdoor morning/afternoon sun conditions (intensity, color temperature,
+    and sun elevation/azimuth angle).
+
+    Light is global so we randomize once per reset call regardless of how
+    many envs are being reset.
+    """
+    from pxr import UsdLux, UsdGeom, Gf
+    import omni.usd
+
+    stage = omni.usd.get_context().get_stage()
+    light_prim = stage.GetPrimAtPath(light_prim_path)
+    if not light_prim.IsValid():
+        return
+
+    dist_light = UsdLux.DistantLight(light_prim)
+
+    intensity = float(np.random.uniform(*intensity_range))
+    dist_light.GetIntensityAttr().Set(intensity)
+
+    r = float(np.random.uniform(*color_r_range))
+    g = float(np.random.uniform(*color_g_range))
+    b = float(np.random.uniform(*color_b_range))
+    dist_light.GetColorAttr().Set(Gf.Vec3f(r, g, b))
+
+    # Sun direction: DistantLight illuminates along its local -Z.
+    # Euler XYZ = (elev - 90, 0, azim) tilts the downward default
+    # to the correct elevation and rotates it to the desired azimuth.
+    elev_deg = float(np.random.uniform(*elevation_deg_range))
+    azim_deg = float(np.random.uniform(*azimuth_deg_range))
+
+    xformable = UsdGeom.Xformable(light_prim)
+    xformable.ClearXformOpOrder()
+    xformable.AddRotateXYZOp().Set(Gf.Vec3f(elev_deg - 90.0, 0.0, azim_deg))
+
+
+# ---------------------------------------------------------------------------
 # Config Definitions (passed to racing_env)
 # ---------------------------------------------------------------------------
 @configclass
@@ -156,5 +208,19 @@ class RacingEventsRandomCfg(RacingEventsCfg):
             "asset_cfg": SceneEntityCfg("robot", body_names=".*wheel_.*link"),
             "mass_distribution_params": tuple(_EV["wheel_mass_range"]),
             "operation": "abs",
+        },
+    )
+
+    randomize_lighting = EventTerm(
+        func=randomize_lighting,
+        mode="reset",
+        params={
+            "light_prim_path": "/World/light",
+            "intensity_range": (1500.0, 6000.0),
+            "elevation_deg_range": (10.0, 45.0),
+            "azimuth_deg_range": (0.0, 360.0),
+            "color_r_range": (0.9, 1.0),
+            "color_g_range": (0.7, 1.0),
+            "color_b_range": (0.5, 1.0),
         },
     )

@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    defaultPrim = "Cone"
+    metersPerUnit = 1.0
+    upAxis = "Z"
+)
+
+def Xform "Cone"
+{
+    def Mesh "cone_mesh"
+    {
+        # 16-segment cone: base radius 0.15 m, height 0.30 m
+        # Points: indices 0-15 = base ring, 16 = apex, 17 = base centre
+        point3f[] points = [
+            (0.15, 0, 0),
+            (0.13858, 0.05671, 0),
+            (0.10607, 0.10607, 0),
+            (0.05671, 0.13858, 0),
+            (0, 0.15, 0),
+            (-0.05671, 0.13858, 0),
+            (-0.10607, 0.10607, 0),
+            (-0.13858, 0.05671, 0),
+            (-0.15, 0, 0),
+            (-0.13858, -0.05671, 0),
+            (-0.10607, -0.10607, 0),
+            (-0.05671, -0.13858, 0),
+            (0, -0.15, 0),
+            (0.05671, -0.13858, 0),
+            (0.10607, -0.10607, 0),
+            (0.13858, -0.05671, 0),
+            (0, 0, 0.3),
+            (0, 0, 0)
+        ]
+        int[] faceVertexCounts = [
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
+        ]
+        int[] faceVertexIndices = [
+            0, 1, 16,   1, 2, 16,   2, 3, 16,   3, 4, 16,
+            4, 5, 16,   5, 6, 16,   6, 7, 16,   7, 8, 16,
+            8, 9, 16,   9, 10, 16,  10, 11, 16,  11, 12, 16,
+            12, 13, 16,  13, 14, 16,  14, 15, 16,  15, 0, 16,
+            17, 1, 0,   17, 2, 1,   17, 3, 2,   17, 4, 3,
+            17, 5, 4,   17, 6, 5,   17, 7, 6,   17, 8, 7,
+            17, 9, 8,   17, 10, 9,  17, 11, 10,  17, 12, 11,
+            17, 13, 12,  17, 14, 13,  17, 15, 14,  17, 0, 15
+        ]
+        uniform token subdivisionScheme = "none"
+
+        # FSAE orange
+        color3f[] primvars:displayColor = [(1.0, 0.45, 0.0)] (
+            interpolation = "constant"
+        )
+
+        prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+        uniform token physics:approximation = "convexHull"
+    }
+}
