@@ -10,38 +10,13 @@ Notes:
 import torch
 
 import isaaclab.envs.mdp as mdp
-from isaaclab.managers import RewardTermCfg as RewTerm, SceneEntityCfg
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.utils import configclass
 
 from ..config import CONFIG
 
 _RW = CONFIG["rewards"]
-_GOALS = CONFIG.get("goals", {})
 _PPO_ALG = CONFIG.get("ppo", {}).get("algorithm", {})
-
-# Cached SceneEntityCfg for wheel bodies
-_WHEEL_BODY_CFG: SceneEntityCfg | None = None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _wheel_body_cfg(env) -> SceneEntityCfg:
-    """Resolve and cache the SceneEntityCfg covering the four wheel bodies."""
-    global _WHEEL_BODY_CFG
-    if _WHEEL_BODY_CFG is None:
-        # resolve a single time, scene cfg entity will never change
-        cfg = SceneEntityCfg("robot", body_names=".*wheel_.*link")
-        cfg.resolve(env.scene)
-        _WHEEL_BODY_CFG = cfg
-    return _WHEEL_BODY_CFG
-
-
-def _wheel_xy_w(env) -> torch.Tensor:
-    """(num_envs, num_wheels, 2) world-frame wheel positions."""
-    cfg = _wheel_body_cfg(env)
-    asset = env.scene[cfg.name]
-    return asset.data.body_pos_w[:, cfg.body_ids, :2]
 
 
 def compute_progress_step(env) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -73,11 +48,17 @@ def compute_progress_step(env) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor
     env._racing_progress_cache = (counter, result) # cache result
     return result
 
-def on_track_mask(env, off_track_wheel_threshold):
-    wheel_xy = _wheel_xy_w(env)
-    off_mask = env.scene.terrain.wheels_off_track(wheel_xy)
-    on_track_enough = off_mask.sum(dim=-1) < off_track_wheel_threshold
-    return on_track_enough
+def within_cones_mask(env) -> torch.Tensor:
+    """(num_envs,) bool — True when the car is within the cone-defined track boundary.
+
+    Uses the signed lateral distance from centerline projection; the car is
+    inside the track when abs(d_signed) <= track_width / 2.
+    """
+    terrain = env.scene.terrain
+    env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
+    root_pos = mdp.root_pos_w(env)[..., :2]
+    d_signed, _, track_widths, _, _ = terrain.project_to_centerline(root_pos, env_ids)
+    return d_signed.abs() <= (track_widths * 0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -107,14 +88,13 @@ def time_step_penalty(env):
     return torch.ones(env.num_envs, device=env.device)
 
 
-def off_track_penalty(env, off_track_wheel_threshold: int = 1):
-    """Per-step cost while too many wheels are off track.
+def outside_cones_penalty(env):
+    """Per-step cost when the car crosses outside the cone barriers.
 
-    Returns a positive value (1 when off, 0 when on); sign comes from the
-    (negative) weight in RacingRewardsCfg.
+    Returns 1.0 when outside the track boundary, 0.0 when inside.
+    Sign comes from the (negative) weight in RacingRewardsCfg.
     """
-    on_track = on_track_mask(env, off_track_wheel_threshold)
-    return (~on_track).float()
+    return (~within_cones_mask(env)).float()
 
 
 # ---------------------------------------------------------------------------
@@ -135,12 +115,9 @@ class RacingRewardsCfg:
         weight=float(_RW["time_step_pen_weight"]),
     )
 
-    off_track_pen = RewTerm(
-        func=off_track_penalty,
+    outside_cones_pen = RewTerm(
+        func=outside_cones_penalty,
         weight=float(_RW["off_track_pen_weight"]),
-        params={
-            "off_track_wheel_threshold": int(_GOALS.get("off_track_wheel_threshold", 3)),
-        },
     )
   
     # Termination reward for reaching finish lap

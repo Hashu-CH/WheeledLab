@@ -28,6 +28,7 @@ terrain:
   steps_per_segment: 40
   margin_frac: 0.1
   cone_spacing_m: 0.75
+  tile_padding_cells: 10  # gap cells between tiles (~2.5 m at 0.25 m/cell)
 
 # PPO Parameters
 ppo:
@@ -81,7 +82,6 @@ rewards:
 # Goal Oriented Reward Parameters
 goals:
   loop_dist_frac_range: [0.1, 0.95]
-  off_track_wheel_threshold: 1
   goal_reached_eps_m: 0.5
 
 

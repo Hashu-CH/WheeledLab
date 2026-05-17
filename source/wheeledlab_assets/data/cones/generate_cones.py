@@ -15,7 +15,7 @@ Cone geometry: frustum approximated as a cylinder stack + apex, ~0.3 m tall,
 import math
 import os
 import numpy as np
-from pxr import Usd, UsdGeom, Gf, UsdPhysics, UsdShade
+from pxr import Usd, UsdGeom, Gf
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +76,7 @@ def _write_cone_usd(path: str, color: tuple[float, float, float]):
     color_primvar = mesh.CreateDisplayColorPrimvar(UsdGeom.Tokens.constant)
     color_primvar.Set([Gf.Vec3f(*color)])
 
-    # Physics — passive (cones don't move, but cars can collide with them)
-    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-    mesh_collision = UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim())
-    mesh_collision.GetApproximationAttr().Set("convexHull")
-
+    # No collision — cones are visual-only.
     stage.Save()
     print(f"Written: {path}")
 

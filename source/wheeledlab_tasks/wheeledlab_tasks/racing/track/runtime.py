@@ -67,7 +67,6 @@ class RacingTerrainImporter(TerrainImporter):
         self._cumulative_arc_t: torch.Tensor | None = None
         self._total_lengths_t: torch.Tensor | None = None
         self._is_closed_t: torch.Tensor | None = None
-        self._traversability_t: torch.Tensor | None = None
         self.prev_dist_to_finish: torch.Tensor | None = None
         self.goal_arc_length: torch.Tensor | None = None
 
@@ -91,7 +90,6 @@ class RacingTerrainImporter(TerrainImporter):
         self._cumulative_arc_t = torch.as_tensor(tc.cumulative_arc_lengths_m, dtype=torch.float32, device=device)
         self._total_lengths_t = torch.as_tensor(tc.total_lengths_m, dtype=torch.float32, device=device)
         self._is_closed_t = torch.as_tensor(tc.is_closed, dtype=torch.bool, device=device)
-        self._traversability_t = torch.as_tensor(tc.traversability_grid, dtype=torch.bool, device=device)
 
     # ------------------------------------------------------------------
     # Helper utilities for interacting with geometry features of track/render
@@ -130,36 +128,6 @@ class RacingTerrainImporter(TerrainImporter):
         seg_len = seg_lengths.gather(1, seg_idx.unsqueeze(-1)).squeeze(-1)
         arc_length = seg_start_arc + t_param * seg_len
         return d_signed, nearest_tangent, track_widths, arc_length, seg_idx
-
-    def wheels_off_track(self, wheel_xy_w: torch.Tensor) -> torch.Tensor:
-        """Per-wheel pixel lookup against the rasterised traversability grid.
-
-        Args:
-        - wheel_xy_w: (N, 4, 2) world-meter wheel positions (4 = num wheels)
-
-        Returns:
-        - off_track: (N, 4) bool, True where the wheel is OFF the drivable
-          surface (traversability_grid == False).
-        """
-        self._ensure_track_tensors(wheel_xy_w.device)
-        ox, oy = self.track_cache.world_origin_xy_m
-        cs_x, cs_y = self.track_cache.cell_size_m
-        num_rows, num_cols = self.track_cache.traversability_grid.shape
-
-        # world wheel coordinate convertion to cell coordinates
-        col = torch.floor((wheel_xy_w[..., 0] - ox) / cs_x).long()
-        row = torch.floor((wheel_xy_w[..., 1] - oy) / cs_y).long()
-
-        # outside of map are off track as well
-        in_bounds = (
-            (col >= 0) & (col < num_cols) & (row >= 0) & (row < num_rows)
-        )
-
-        # use in bound mask and clamp to avoid index errors
-        col_c = col.clamp(0, num_cols - 1)
-        row_c = row.clamp(0, num_rows - 1)
-        on_track = self._traversability_t[row_c, col_c] & in_bounds
-        return ~on_track
 
 
     def update_progress(self, env_ids: torch.Tensor, root_pos_xy_w: torch.Tensor) -> torch.Tensor:

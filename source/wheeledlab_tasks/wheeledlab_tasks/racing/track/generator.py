@@ -6,23 +6,22 @@ Notes:
 - Track-aware rewards need a geometric view of the terrain — centerline
   polyline, tangents, per-tile widths — which live in the TrackCache
   dataclass below and are populated when the USD is authored.
-- A rasterised traversability grid is computed inside
-  generated_colored_track_plane to color the ground-plane mesh faces
-  (black = off-track, white = on-track). It is also kept on TrackCache so
-  reward terms can do per-wheel pixel-lookups against the same drivable
-  surface that gets rendered.
+- The ground is a simple flat grey plane. Track boundaries are defined
+  purely by cone positions; the traversability grid is no longer used.
 - Coord-frame convention: polylines from curriculum.generate_track are in
   grid-cell units within a tile (x in [0, env_num_cols], y in [0, env_num_rows]).
   We convert to WORLD METERS here so reward-time projection doesn't re-derive
   the transform. All TrackCache arrays are world-frame.
+- tile_padding_cells adds a gap (in cells) around each tile so that cones
+  from neighbouring tiles don't sit too close together.
 
 Concern:
 
-- Right now, each environment (robot) gets its own track and tile. Which 1, constrains 
-  compute since we cache track information and can't re-use. 2, will likely be high 
+- Right now, each environment (robot) gets its own track and tile. Which 1, constrains
+  compute since we cache track information and can't re-use. 2, will likely be high
   variance.
-  We could seed tracks and duplicate them as an easy fix. Most optimally, we allow duplicate 
-  envs on the same tiles. TODO: It's easy to prevent collisions (collision groups) but 
+  We could seed tracks and duplicate them as an easy fix. Most optimally, we allow duplicate
+  envs on the same tiles. TODO: It's easy to prevent collisions (collision groups) but
   much harder to make envs invisible to each other in the camera observation.
 """
 
@@ -70,9 +69,6 @@ class TrackCache:
     tile_origins_w: np.ndarray # (num_tiles, 2), world-meter tile centers
     tile_extent_m: tuple[float, float] # (x_extent, y_extent) per tile, meters (fixed here)
     tile_cell_bounds: np.ndarray # (num_tiles, 4): row_start, row_end, col_start, col_end
-    traversability_grid: np.ndarray # (num_rows, num_cols), bool, True = on-track (drivable)
-    world_origin_xy_m: tuple[float, float] # world-meter coords of grid cell (0, 0) corner: (-width/2, -height/2)
-    cell_size_m: tuple[float, float] # (col_spacing, row_spacing) for world<->cell conversion
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +166,7 @@ def _spawn_cones_in_stage(
 # ---------------------------------------------------------------------------
 # Map sizing
 # ---------------------------------------------------------------------------
-def compute_map_size(num_envs, env_size):
+def compute_map_size(num_envs, env_size, tile_padding_cells=0):
     """Map dimensions (in cells) to pack `num_envs` non-overlapping sub-envs in
     a square-ish grid.
 
@@ -178,91 +174,69 @@ def compute_map_size(num_envs, env_size):
 
     Args:
     - num_envs: total parallel envs (must be a power of 2)
-    - env_size: (env_num_rows, env_num_cols) — cells per tile
+    - env_size: (env_num_rows, env_num_cols) — cells per tile (inner track area)
+    - tile_padding_cells: extra cells added around each tile to space cones apart
     """
     if num_envs < 1 or (num_envs & (num_envs - 1)) != 0:
         raise ValueError(f"num_envs must be a power of 2, got {num_envs}")
     env_num_rows, env_num_cols = env_size
+    padded_rows = env_num_rows + tile_padding_cells
+    padded_cols = env_num_cols + tile_padding_cells
     exponent = num_envs.bit_length() - 1
     grid_rows = 1 << (exponent // 2)
     grid_cols = 1 << (exponent - exponent // 2)
-    return grid_rows * env_num_rows, grid_cols * env_num_cols
+    return grid_rows * padded_rows, grid_cols * padded_cols
 
 
 # ---------------------------------------------------------------------------
 # Terrain + track-cache construction
 # ---------------------------------------------------------------------------
-def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
-    """Build the colored ground-plane mesh plus the per-tile track cache.
+def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=False, tile_padding_cells=0):
+    """Build a flat grey ground-plane mesh plus the per-tile track cache.
 
-    For each tile we generate a procedural track, rasterise it into the global
-    traversability hashmap, and capture the centerline polyline (converted to
-    world meters) into TrackCache. The cache is the geometric counterpart to
-    the pixel hashmap — rewards use it for centerline projection while the
-    hashmap is what is rendered and 'seen'.
+    Cones define the track boundaries; no traversability grid is rasterised.
+    tile_padding_cells adds a border of empty cells around each tile so that
+    cones from neighbouring tiles are separated by at least
+    (tile_padding_cells * spacing) metres.
 
     Args:
-    - map_size: (num_rows, num_cols) — total grid cells across the whole map
+    - map_size: (num_rows, num_cols) — total grid cells (already accounts for padding)
     - spacing: (row_spacing, col_spacing) — meters per cell
-    - env_size: (env_num_rows, env_num_cols) — cells per tile
-    - color_sampling: whether to jitter tile colors (inherited from visual task)
+    - env_size: (env_num_rows, env_num_cols) — inner track area cells per tile
+    - color_sampling: unused, kept for API compatibility
+    - tile_padding_cells: gap cells added around each inner track tile
 
     Returns:
     - USD mesh fields (vertices, faces, face_counts, face_colors_triangle)
-      and a TrackCache. The rasterised grid is used only for the mesh faces
+      and a TrackCache.
     """
     num_rows, num_cols = map_size
     row_spacing, col_spacing = spacing
     env_num_rows, env_num_cols = env_size
 
-    # Convention: col -> x, row -> y. Matches the racing_default.yaml comments
-    # ("world tile width = env_num_cols * col_spacing", etc.).
+    # Convention: col -> x, row -> y.
     width = num_cols * col_spacing   # x-extent
     height = num_rows * row_spacing  # y-extent
 
-    if num_rows % env_num_rows != 0 or num_cols % env_num_cols != 0:
-        raise ValueError("Map size must be a multiple of the sub environment size.")
+    padded_num_rows = env_num_rows + tile_padding_cells
+    padded_num_cols = env_num_cols + tile_padding_cells
+    half_pad = tile_padding_cells // 2
 
-    num_env_rows = num_rows // env_num_rows
-    num_env_cols = num_cols // env_num_cols
+    if num_rows % padded_num_rows != 0 or num_cols % padded_num_cols != 0:
+        raise ValueError("Map size must be a multiple of the padded tile size.")
 
-    xs = np.linspace(-width / 2, width / 2, num_cols) - col_spacing / 2
-    ys = np.linspace(-height / 2, height / 2, num_rows) - row_spacing / 2
-    xx, yy = np.meshgrid(xs, ys)  # default 'xy' indexing -> shape (num_rows, num_cols)
+    num_env_rows = num_rows // padded_num_rows
+    num_env_cols = num_cols // padded_num_cols
 
-    # ravel is row-major over (num_rows, num_cols), so vertex index
-    # k = row_index * num_cols + col_index. This stride matches the face loop below.
-    vertices = [(x, y, 0) for x, y in zip(xx.ravel(), yy.ravel())]
-
-    def color_sampler(r, g, b, range):
-        r = np.random.uniform(r - range // 2, r + range // 2) / 255.
-        g = np.random.uniform(g - range // 2, g + range // 2) / 255.
-        b = np.random.uniform(b - range // 2, b + range // 2) / 255.
-        return Gf.Vec3f(r, g, b)
-
-    if color_sampling:
-        colors = [
-            color_sampler(30, 30, 30, 30),
-            color_sampler(220.0, 220.0, 220.0, 30),
-        ]
-    else:
-        colors = [
-            Gf.Vec3f(0.0, 0.0, 0.0),
-            Gf.Vec3f(1.0, 1.0, 1.0),
-        ]
-
-    # USD mesh takes triangles. 2 per tile
-    faces = []
-    face_counts = []
-    traversability_hashmap = np.zeros((num_rows, num_cols)).astype(bool)
-    for row_index in range(num_rows - 1):
-        for col_index in range(num_cols - 1):
-            v0 = row_index * num_cols + col_index
-            v1 = v0 + 1
-            v2 = v0 + num_cols
-            v3 = v2 + 1
-            faces += [v0, v1, v2, v2, v1, v3]
-            face_counts += [3, 3]
+    # Simple 4-vertex flat grey ground plane (no traversability coloring).
+    vertices = [
+        (-width / 2, -height / 2, 0),
+        ( width / 2, -height / 2, 0),
+        (-width / 2,  height / 2, 0),
+        ( width / 2,  height / 2, 0),
+    ]
+    faces = [0, 1, 2, 2, 1, 3]
+    face_counts = [3, 3]
 
     # init structs for track data cache
     num_tiles = num_env_rows * num_env_cols
@@ -275,12 +249,17 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     left_boundary_positions: list[np.ndarray] = []
     right_boundary_positions: list[np.ndarray] = []
 
-    # Generate per env tracks and fills track data cache
+    # Generate per-env tracks and build track data cache.
+    # Each tile occupies a padded_num_rows × padded_num_cols slot in the global
+    # grid; the actual track lives in the inner env_num_rows × env_num_cols region
+    # offset by half_pad on each side.
     for i in range(num_env_rows):
         for j in range(num_env_cols):
             tile_idx = i * num_env_cols + j
-            start_row = i * env_num_rows
-            start_col = j * env_num_cols
+            slot_start_row = i * padded_num_rows
+            slot_start_col = j * padded_num_cols
+            track_start_row = slot_start_row + half_pad
+            track_start_col = slot_start_col + half_pad
 
             _diff_lo, _diff_hi = _TER["difficulty_range"]
             config = CurriculumConfig(
@@ -291,17 +270,13 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
                 margin_frac=float(_TER["margin_frac"]),
             )
             config.resolve()  # resolve upfront so we can capture config.track_width per-tile
-            grid, polyline = generate_track(env_size=env_size, config=config)
-            traversability_hashmap[
-                start_row:start_row + env_num_rows,
-                start_col:start_col + env_num_cols,
-            ] = grid
+            _, polyline = generate_track(env_size=env_size, config=config)
 
             # Convert tile-local cell-coord polyline -> world meters.
             # poly_cells[:, 0] is the col-direction (x), poly_cells[:, 1] is the row-direction (y).
             poly_cells = np.asarray(polyline, dtype=np.float32)  # (M_tile, 2)
-            world_x = (poly_cells[:, 0] + start_col - num_cols / 2.0) * col_spacing
-            world_y = (poly_cells[:, 1] + start_row - num_rows / 2.0) * row_spacing
+            world_x = (poly_cells[:, 0] + track_start_col - num_cols / 2.0) * col_spacing
+            world_y = (poly_cells[:, 1] + track_start_row - num_rows / 2.0) * row_spacing
             tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
 
             # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
@@ -316,18 +291,17 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
             left_boundary_positions.append(left_pos)
             right_boundary_positions.append(right_pos)
 
-            # Tile origin: world-meter center of the tile. Stored for viz /
-            # debug; not currently used at runtime — see TODO in
-            # mushr_racing_env_cfg.py about env-local observations.
-            tile_center_col = start_col + env_num_cols / 2.0
-            tile_center_row = start_row + env_num_rows / 2.0
+            # Tile origin: world-meter center of the inner track area.
+            # Used by out_of_tile() with tile_extent_m = inner track size.
+            tile_center_col = track_start_col + env_num_cols / 2.0
+            tile_center_row = track_start_row + env_num_rows / 2.0
             tile_origins_w[tile_idx, 0] = (tile_center_col - num_cols / 2.0) * col_spacing
             tile_origins_w[tile_idx, 1] = (tile_center_row - num_rows / 2.0) * row_spacing
 
-            # Cell bounds: used by per-env spawn restriction.
+            # Cell bounds: inner track area (used by per-env spawn restriction).
             tile_cell_bounds[tile_idx] = (
-                start_row, start_row + env_num_rows,
-                start_col, start_col + env_num_cols,
+                track_start_row, track_start_row + env_num_rows,
+                track_start_col, track_start_col + env_num_cols,
             )
 
     # Pad polylines to uniform shape with NaN; build tangents + segment-valid mask.
@@ -358,7 +332,6 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
     ) # (num_tiles, M_max)
     total_lengths_m = cumulative_arc_lengths_m[:, -1].astype(np.float32) # (num_tiles,)
 
-    # Save track cache for generated world plane
     track_cache = TrackCache(
         polylines_w=polylines_w,
         tangents_w=tangents_w,
@@ -371,20 +344,10 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
         tile_origins_w=tile_origins_w,
         tile_extent_m=(env_num_cols * col_spacing, env_num_rows * row_spacing),
         tile_cell_bounds=tile_cell_bounds,
-        traversability_grid=traversability_hashmap.copy(),
-        world_origin_xy_m=(-width / 2.0, -height / 2.0),
-        cell_size_m=(col_spacing, row_spacing),
     )
 
-    # paint triangle colors for USD mesh init
-    face_colors = [
-        colors[int(traversability_hashmap[row_index, col_index])]
-        for row_index in range(num_rows - 1)
-        for col_index in range(num_cols - 1)
-    ]
-    face_colors_triangle = []
-    for color in face_colors:
-        face_colors_triangle += [color, color]
+    grey = Gf.Vec3f(0.15, 0.15, 0.15)
+    face_colors_triangle = [grey, grey]
 
     return vertices, faces, face_counts, face_colors_triangle, track_cache, \
         left_boundary_positions, right_boundary_positions
@@ -393,20 +356,19 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling):
 # ---------------------------------------------------------------------------
 # USD authoring
 # ---------------------------------------------------------------------------
-def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling=False):
-    """Create a USD file with a rasterised track plane.
+def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling=False, tile_padding_cells=0):
+    """Create a USD file with a flat grey ground plane and cone markers.
 
-    Returns the TrackCache for storage on RacingTerrainImporterCfg. 
-    
-    Change from visual task: travers_hashmap is used just to color mesh.
-    All rewards follow the pure geometry from the track cache
+    Returns the TrackCache for storage on RacingTerrainImporterCfg.
+    Track boundaries are defined by cones; no traversability grid is used.
 
     Args:
     - file_path: output USD path (written to disk)
-    - map_size: (num_rows, num_cols)
+    - map_size: (num_rows, num_cols) — total grid cells (padding already included)
     - spacing: (row_spacing, col_spacing) in meters
-    - env_size: cells per tile
-    - color_sampling: whether to jitter tile colors
+    - env_size: inner track cells per tile
+    - color_sampling: unused, kept for API compatibility
+    - tile_padding_cells: gap cells around each tile (passed to plane generator)
     """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
@@ -417,10 +379,10 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
     xform = UsdGeom.Xform.Define(stage, '/World')
     stage.SetDefaultPrim(xform.GetPrim())
 
-    plane = UsdGeom.Mesh.Define(stage, '/World/colored_plane')
+    plane = UsdGeom.Mesh.Define(stage, '/World/ground_plane')
 
     vertices, faces, face_counts, face_colors, track_cache, left_pos, right_pos = \
-        generated_colored_track_plane(map_size, spacing, env_size, color_sampling)
+        generated_colored_track_plane(map_size, spacing, env_size, color_sampling, tile_padding_cells)
 
     plane.GetPointsAttr().Set(vertices)
     plane.GetFaceVertexCountsAttr().Set(face_counts)

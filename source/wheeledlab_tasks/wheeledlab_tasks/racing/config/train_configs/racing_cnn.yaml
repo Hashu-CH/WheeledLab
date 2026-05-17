@@ -20,6 +20,7 @@ terrain:
   phase_boundary: 0.0
   track_width_cells: 5
   cone_spacing_m: 0.75
+  tile_padding_cells: 10  # gap cells between tiles (~2.5 m at 0.25 m/cell)
   steps_per_segment: 40
   margin_frac: 0.1
 
@@ -67,7 +68,6 @@ rewards:
 
 goals:
   loop_dist_frac_range: [0.1, 0.95]
-  off_track_wheel_threshold: 1
   goal_reached_eps_m: 0.5
 
 events:

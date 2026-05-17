@@ -103,6 +103,10 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     # Whether to sample colors
     color_sampling = bool(_TER["color_sampling"])
 
+    # Extra cells added around each tile to prevent cones from neighbouring
+    # tiles sitting too close together.
+    tile_padding_cells = int(_TER.get("tile_padding_cells", 0))
+
     # Sizing + USD generation deferred to `configure()` so they can depend on num_envs.
     num_rows = 0
     num_cols = 0
@@ -135,7 +139,7 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
         Args:
         - num_envs: total parallel envs (sets tile grid size + track count)
         """
-        self.num_rows, self.num_cols = compute_map_size(num_envs, self.env_size)
+        self.num_rows, self.num_cols = compute_map_size(num_envs, self.env_size, self.tile_padding_cells)
         self.map_size = (self.num_rows, self.num_cols)
         self.width = self.num_cols * self.col_spacing   # x-extent
         self.height = self.num_rows * self.row_spacing  # y-extent
@@ -144,7 +148,8 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
         )
         self.usd_path = self.file_name
         track_cache = create_track_geometry(
-            self.file_name, self.map_size, self.spacing, self.env_size, self.color_sampling,
+            self.file_name, self.map_size, self.spacing, self.env_size,
+            self.color_sampling, self.tile_padding_cells,
         )
         # Hand off to RacingTerrainImporter.__init__, which pops it at scene-build time.
         stash_track_cache(track_cache)
