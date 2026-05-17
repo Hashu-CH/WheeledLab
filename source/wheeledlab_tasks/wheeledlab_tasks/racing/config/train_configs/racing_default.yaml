@@ -27,7 +27,7 @@ terrain:
   track_width_cells: 5
   steps_per_segment: 40
   margin_frac: 0.1
-  cone_spacing_m: 1.5
+  cone_spacing_m: 0.75
 
 # PPO Parameters
 ppo:
