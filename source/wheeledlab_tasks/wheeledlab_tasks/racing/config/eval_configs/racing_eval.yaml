@@ -22,10 +22,14 @@ terrain:                  # primary lever for eval difficulty
   track_width_cells: 5
   steps_per_segment: 40
   margin_frac: 0.1
+  cone_spacing_m: 0.4        # nominal arc-length spacing; denser on turns
+  track_width_m: 0.35       # full corridor width, left cone to right cone
+  cone_curvature_scale: 2.0 # density multiplier on turns; 0 = uniform spacing
+  tile_padding_cells: 10    # gap cells between tiles (~2.5 m at 0.25 m/cell)
+  ground_resolution_m: 1.0  # ground grid cell size (used at USD init time)
 
 goals:
   loop_dist_frac_range: [0.95, 0.95]   # EVAL-DIFF: was [0.1, 0.95]; narrower window so loop attempts are comparable
-  off_track_wheel_threshold: 1
   goal_reached_eps_m: 0.35
 
 events:                   # physical randomization at robot spawn

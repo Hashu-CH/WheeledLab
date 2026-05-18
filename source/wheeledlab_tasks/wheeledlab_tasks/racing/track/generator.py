@@ -283,10 +283,11 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     tile_is_closed: list[bool] = [] # True for closed-loop tracks (phase 2)
     tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
     tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
-    cone_spacing_m   = float(_TER.get("cone_spacing_m", 1.5))
-    curvature_scale  = float(_TER.get("cone_curvature_scale", 0.0))
-    # cone_half_width_m: explicit override; falls back to track_width_cells * spacing / 2
-    _cone_half_width_cfg = float(_TER.get("cone_half_width_m", 0.0))
+    cone_spacing_m    = float(_TER.get("cone_spacing_m", 1.5))
+    curvature_scale   = float(_TER.get("cone_curvature_scale", 0.0))
+    # track_width_m: full L-cone to R-cone corridor width; falls back to
+    # track_width_cells * spacing when not set.
+    _track_width_cfg  = float(_TER.get("track_width_m", 0.0))
     left_boundary_positions: list[np.ndarray] = []
     right_boundary_positions: list[np.ndarray] = []
 
@@ -320,10 +321,10 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
             world_y = (poly_cells[:, 1] + track_start_row - num_rows / 2.0) * row_spacing
             tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
 
-            # cone_half_width_m: use explicit config value if provided, otherwise
-            # derive from track_width_cells (half the full-width approximation).
+            # track_width_m: full L-to-R corridor; halve it for cone offset.
+            # Falls back to track_width_cells * spacing when not set.
             cells_half_w = float(config.track_width) * row_spacing / 2.0
-            cone_half_w = _cone_half_width_cfg if _cone_half_width_cfg > 0.0 else cells_half_w
+            cone_half_w = _track_width_cfg / 2.0 if _track_width_cfg > 0.0 else cells_half_w
             tile_track_widths_m.append(cone_half_w * 2.0)
             tile_is_closed.append(not config.is_chain)
 
