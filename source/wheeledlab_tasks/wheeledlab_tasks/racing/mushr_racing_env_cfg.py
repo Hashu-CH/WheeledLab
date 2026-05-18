@@ -180,10 +180,11 @@ class MushrRacingSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MUSHR_SUS_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     ground.init_state.pos = (0.0, 0.0, -1e-4)
 
-    # necessary?
+    # Fixed clear-daytime sun: warm white, ~45° elevation (quat = 45° tilt around Y).
     light = AssetBaseCfg(
         prim_path="/World/light",
-        spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
+        spawn=sim_utils.DistantLightCfg(color=(1.0, 0.95, 0.88), intensity=3500.0),
+        init_state=AssetBaseCfg.InitialStateCfg(rot=(0.924, 0.0, 0.383, 0.0)),
     )
 
     # TODO wire hyper parameters from file so that all hyper params are observable at once

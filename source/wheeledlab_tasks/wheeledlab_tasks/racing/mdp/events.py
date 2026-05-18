@@ -31,6 +31,7 @@ from ..config import CONFIG
 _EV = CONFIG["events"]
 _WF = _EV["wheel_friction"]
 _GOALS = CONFIG.get("goals", {})
+_TER = CONFIG["terrain"]
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,71 @@ def init_progress_state(
 
 
 # ---------------------------------------------------------------------------
+# Ground texture randomization
+# ---------------------------------------------------------------------------
+
+def randomize_ground_texture(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    plane_prim_path: str = "/World/ground_plane",
+    grid_resolution_m: float = 1.0,
+    noise_sigma: float = 3.0,
+    brightness_range: tuple = (0.1, 0.5),
+    update_interval_steps: int = 256,
+):
+    """Replace the ground plane's face colors with Gaussian-blurred greyscale noise.
+
+    Produces a slowly-varying random texture each update, providing visual
+    domain randomization without altering track geometry or cone positions.
+
+    Debounced to at most one USD write every update_interval_steps policy
+    steps (global counter) so the cost is amortized across many resets.
+
+    Args:
+    - grid_resolution_m: must match terrain.ground_resolution_m so that the
+      cell count derived here agrees with the mesh created at USD init time.
+    - noise_sigma: Gaussian blur sigma in grid cells (larger = smoother).
+    - brightness_range: (lo, hi) greyscale clamp after blurring.
+    - update_interval_steps: minimum policy steps between USD writes.
+    """
+    last = getattr(env, "_last_ground_tex_step", -update_interval_steps)
+    if int(env.common_step_counter) - last < update_interval_steps:
+        return
+    env._last_ground_tex_step = int(env.common_step_counter)
+
+    try:
+        from pxr import UsdGeom, Gf
+        import omni.usd
+        import scipy.ndimage
+    except ImportError:
+        return
+
+    stage = omni.usd.get_context().get_stage()
+    plane_prim = stage.GetPrimAtPath(plane_prim_path)
+    if not plane_prim.IsValid():
+        return
+
+    # Derive cell counts from the terrain config, mirroring generator.py.
+    cfg = env.scene.terrain.cfg
+    width  = float(cfg.width)
+    height = float(cfg.height)
+    ncols_cells = max(1, int(np.ceil(width  / grid_resolution_m)))
+    nrows_cells = max(1, int(np.ceil(height / grid_resolution_m)))
+
+    lo, hi = float(brightness_range[0]), float(brightness_range[1])
+    noise   = np.random.uniform(lo, hi, size=(nrows_cells, ncols_cells)).astype(np.float32)
+    blurred = scipy.ndimage.gaussian_filter(noise, sigma=noise_sigma)
+    blurred = np.clip(blurred, lo, hi)
+
+    # Each grid cell is 2 triangles; displayColor interpolation is "uniform"
+    # (one entry per face), so repeat each cell value twice.
+    grey_per_cell = blurred.ravel()                     # (nrows_cells * ncols_cells,)
+    grey_per_face = np.repeat(grey_per_cell, 2)         # (n_faces,)
+    colors = [Gf.Vec3f(float(v), float(v), float(v)) for v in grey_per_face]
+
+    UsdGeom.Mesh(plane_prim).GetDisplayColorAttr().Set(colors)
+
+
 # Lighting randomization
 # ---------------------------------------------------------------------------
 
@@ -211,16 +277,14 @@ class RacingEventsRandomCfg(RacingEventsCfg):
         },
     )
 
-    randomize_lighting = EventTerm(
-        func=randomize_lighting,
+    randomize_ground_texture = EventTerm(
+        func=randomize_ground_texture,
         mode="reset",
         params={
-            "light_prim_path": "/World/light",
-            "intensity_range": (1500.0, 6000.0),
-            "elevation_deg_range": (10.0, 45.0),
-            "azimuth_deg_range": (0.0, 360.0),
-            "color_r_range": (0.9, 1.0),
-            "color_g_range": (0.7, 1.0),
-            "color_b_range": (0.5, 1.0),
+            "plane_prim_path": "/World/ground_plane",
+            "grid_resolution_m": float(_TER.get("ground_resolution_m", 1.0)),
+            "noise_sigma":         float(_EV.get("ground_noise_sigma", 3.0)),
+            "brightness_range":    tuple(_EV.get("ground_brightness_range", [0.1, 0.5])),
+            "update_interval_steps": int(_EV.get("ground_texture_update_interval", 256)),
         },
     )

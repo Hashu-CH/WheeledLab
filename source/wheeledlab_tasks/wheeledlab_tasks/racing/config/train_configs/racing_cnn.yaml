@@ -20,7 +20,8 @@ terrain:
   phase_boundary: 0.0
   track_width_cells: 5
   cone_spacing_m: 0.75
-  tile_padding_cells: 10  # gap cells between tiles (~2.5 m at 0.25 m/cell)
+  tile_padding_cells: 10    # gap cells between tiles (~2.5 m at 0.25 m/cell)
+  ground_resolution_m: 1.0  # ground grid cell size for texture DR
   steps_per_segment: 40
   margin_frac: 0.1
 
@@ -80,6 +81,9 @@ events:
   base_mass_range:  [1.0, 3.0]
   wheel_mass_range: [0.01, 0.3]
   spawn_yaw_offset_deg_range: [-30.0, 30.0]
+  ground_noise_sigma: 3.0               # Gaussian blur radius in grid cells
+  ground_brightness_range: [0.1, 0.5]  # greyscale lo/hi after blur
+  ground_texture_update_interval: 256  # policy steps between USD texture writes
 
 observations:
   enable_corruption: true

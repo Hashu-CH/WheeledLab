@@ -228,15 +228,27 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     num_env_rows = num_rows // padded_num_rows
     num_env_cols = num_cols // padded_num_cols
 
-    # Simple 4-vertex flat grey ground plane (no traversability coloring).
-    vertices = [
-        (-width / 2, -height / 2, 0),
-        ( width / 2, -height / 2, 0),
-        (-width / 2,  height / 2, 0),
-        ( width / 2,  height / 2, 0),
-    ]
-    faces = [0, 1, 2, 2, 1, 3]
-    face_counts = [3, 3]
+    # Ground plane as a regular grid for per-episode texture DR.
+    # Resolution is coarser than the track cell grid — one vertex per
+    # ground_resolution_m rather than per row/col_spacing.
+    grid_res = float(_TER.get("ground_resolution_m", 1.0))
+    ncols_v = max(2, int(np.ceil(width  / grid_res)) + 1)
+    nrows_v = max(2, int(np.ceil(height / grid_res)) + 1)
+    xs_g = np.linspace(-width  / 2, width  / 2, ncols_v)
+    ys_g = np.linspace(-height / 2, height / 2, nrows_v)
+    xx_g, yy_g = np.meshgrid(xs_g, ys_g)
+    vertices = [(float(x), float(y), 0.0) for x, y in zip(xx_g.ravel(), yy_g.ravel())]
+
+    faces = []
+    face_counts = []
+    for r in range(nrows_v - 1):
+        for c in range(ncols_v - 1):
+            v0 = r * ncols_v + c
+            v1 = v0 + 1
+            v2 = v0 + ncols_v
+            v3 = v2 + 1
+            faces += [v0, v1, v2, v2, v1, v3]
+            face_counts += [3, 3]
 
     # init structs for track data cache
     num_tiles = num_env_rows * num_env_cols
@@ -346,8 +358,8 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
         tile_cell_bounds=tile_cell_bounds,
     )
 
-    grey = Gf.Vec3f(0.15, 0.15, 0.15)
-    face_colors_triangle = [grey, grey]
+    grey = Gf.Vec3f(0.3, 0.3, 0.3)
+    face_colors_triangle = [grey] * len(face_counts)
 
     return vertices, faces, face_counts, face_colors_triangle, track_cache, \
         left_boundary_positions, right_boundary_positions
