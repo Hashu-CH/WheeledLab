@@ -28,7 +28,7 @@ Concern:
 import os
 from dataclasses import dataclass
 import numpy as np
-from pxr import Usd, UsdGeom, UsdPhysics, Gf
+from pxr import Usd, UsdGeom, UsdPhysics, UsdShade, Sdf, Gf
 
 from .procedural.curriculum import CurriculumConfig, generate_track
 from ..config import CONFIG
@@ -42,6 +42,49 @@ _CONES_DIR = os.path.realpath(
 )
 _ORANGE_CONE_USD = os.path.join(_CONES_DIR, "orange_cone.usda")
 _BLUE_CONE_USD   = os.path.join(_CONES_DIR, "blue_cone.usda")
+
+# Two alternating texture files so events.py can force USD to reload by toggling paths.
+GROUND_TEX_PATH     = "/tmp/wheeledlab_ground_tex_a.png"
+GROUND_TEX_PATH_ALT = "/tmp/wheeledlab_ground_tex_b.png"
+# USD prim path for the texture reader shader (read by events.py at runtime).
+GROUND_TEX_READER_PATH = "/World/ground_material/TexReader"
+
+
+def _write_grey_texture(path: str, resolution: int = 128) -> None:
+    """Write a solid mid-grey placeholder PNG for the initial USD texture."""
+    try:
+        from PIL import Image
+        Image.new("L", (resolution, resolution), color=77).convert("RGB").save(path)
+    except Exception:
+        pass
+
+
+def _create_ground_material(stage, mat_path: str, tex_file_path: str):
+    """Create a UsdPreviewSurface material with a UV-mapped texture and return it."""
+    mat = UsdShade.Material.Define(stage, mat_path)
+
+    st_reader = UsdShade.Shader.Define(stage, mat_path + "/STReader")
+    st_reader.CreateIdAttr("UsdPrimvarReader_float2")
+    st_reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+    st_out = st_reader.CreateOutput("result", Sdf.ValueTypeNames.Float2)
+
+    tex = UsdShade.Shader.Define(stage, mat_path + "/TexReader")
+    tex.CreateIdAttr("UsdUVTexture")
+    tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(tex_file_path))
+    tex.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("repeat")
+    tex.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("repeat")
+    tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(st_out)
+    rgb_out = tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
+
+    shader = UsdShade.Shader.Define(stage, mat_path + "/Shader")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(rgb_out)
+    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
+    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
+    surf_out = shader.CreateOutput("surface", Sdf.ValueTypeNames.Token)
+
+    mat.CreateSurfaceOutput().ConnectToSource(surf_out)
+    return mat
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +198,13 @@ def _spawn_cones_in_stage(
     left_positions_per_tile:  list[np.ndarray],   # list of (N_i, 2) float32
     right_positions_per_tile: list[np.ndarray],
 ) -> None:
-    """Add orange (left) and blue (right) cone USD references to the stage."""
+    """Author orange (left) and blue (right) cones as a single PointInstancer.
+
+    One prim per color is referenced as a prototype; every cone instance is just
+    an entry in the positions/protoIndices arrays. Keeps USD composition O(2)
+    references instead of O(num_cones), which is the dominant cost on large
+    tracks (tens of thousands of cones across all envs).
+    """
     if not os.path.isfile(_ORANGE_CONE_USD):
         import warnings
         warnings.warn(
@@ -172,21 +221,40 @@ def _spawn_cones_in_stage(
         return
 
     UsdGeom.Xform.Define(stage, "/World/cones")
+    instancer = UsdGeom.PointInstancer.Define(stage, "/World/cones/instancer")
 
-    for tile_idx, (left_pos, right_pos) in enumerate(
-        zip(left_positions_per_tile, right_positions_per_tile)
-    ):
-        for ci, (px, py) in enumerate(left_pos):
-            prim_path = f"/World/cones/orange_t{tile_idx}_c{ci}"
-            xf = UsdGeom.Xform.Define(stage, prim_path)
-            xf.AddTranslateOp().Set(Gf.Vec3d(float(px), float(py), 0.0))
-            xf.GetPrim().GetReferences().AddReference(_ORANGE_CONE_USD)
+    # Prototypes live under the instancer; PointInstancer hides them from
+    # ordinary imageable traversal, so they only render via instances.
+    orange_proto_path = Sdf.Path("/World/cones/instancer/Prototypes/orange")
+    blue_proto_path   = Sdf.Path("/World/cones/instancer/Prototypes/blue")
+    UsdGeom.Scope.Define(stage, "/World/cones/instancer/Prototypes")
+    orange_proto = UsdGeom.Xform.Define(stage, orange_proto_path)
+    orange_proto.GetPrim().GetReferences().AddReference(_ORANGE_CONE_USD)
+    blue_proto = UsdGeom.Xform.Define(stage, blue_proto_path)
+    blue_proto.GetPrim().GetReferences().AddReference(_BLUE_CONE_USD)
 
-        for ci, (px, py) in enumerate(right_pos):
-            prim_path = f"/World/cones/blue_t{tile_idx}_c{ci}"
-            xf = UsdGeom.Xform.Define(stage, prim_path)
-            xf.AddTranslateOp().Set(Gf.Vec3d(float(px), float(py), 0.0))
-            xf.GetPrim().GetReferences().AddReference(_BLUE_CONE_USD)
+    total = sum(len(l) + len(r) for l, r in
+                zip(left_positions_per_tile, right_positions_per_tile))
+    positions = np.empty((total, 3), dtype=np.float32)
+    proto_indices = np.empty(total, dtype=np.int32)
+    cursor = 0
+    for left_pos, right_pos in zip(left_positions_per_tile, right_positions_per_tile):
+        n_l = len(left_pos)
+        positions[cursor:cursor + n_l, 0:2] = left_pos
+        positions[cursor:cursor + n_l, 2]   = 0.0
+        proto_indices[cursor:cursor + n_l]  = 0
+        cursor += n_l
+        n_r = len(right_pos)
+        positions[cursor:cursor + n_r, 0:2] = right_pos
+        positions[cursor:cursor + n_r, 2]   = 0.0
+        proto_indices[cursor:cursor + n_r]  = 1
+        cursor += n_r
+
+    instancer.CreatePrototypesRel().SetTargets([orange_proto_path, blue_proto_path])
+    instancer.CreatePositionsAttr().Set(
+        [Gf.Vec3f(*p) for p in positions.tolist()]
+    )
+    instancer.CreateProtoIndicesAttr().Set(proto_indices.tolist())
 
 
 # ---------------------------------------------------------------------------
@@ -389,10 +457,16 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
         tile_cell_bounds=tile_cell_bounds,
     )
 
-    grey = Gf.Vec3f(0.3, 0.3, 0.3)
-    face_colors_triangle = [grey] * len(face_counts)
+    # UV coordinates: vertex interpolation, u=col→[0,1], v=row→[0,1].
+    # Covers the full ground plane in a single tile so each episode's
+    # texture update is visible everywhere.
+    uvs = [
+        (float(c) / max(ncols_v - 1, 1), float(r) / max(nrows_v - 1, 1))
+        for r in range(nrows_v)
+        for c in range(ncols_v)
+    ]
 
-    return vertices, faces, face_counts, face_colors_triangle, track_cache, \
+    return vertices, faces, face_counts, uvs, track_cache, \
         left_boundary_positions, right_boundary_positions
 
 
@@ -424,13 +498,22 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
 
     plane = UsdGeom.Mesh.Define(stage, '/World/ground_plane')
 
-    vertices, faces, face_counts, face_colors, track_cache, left_pos, right_pos = \
+    vertices, faces, face_counts, uvs, track_cache, left_pos, right_pos = \
         generated_colored_track_plane(map_size, spacing, env_size, color_sampling, tile_padding_cells)
 
     plane.GetPointsAttr().Set(vertices)
     plane.GetFaceVertexCountsAttr().Set(face_counts)
     plane.GetFaceVertexIndicesAttr().Set(faces)
-    plane.CreateDisplayColorPrimvar(UsdGeom.Tokens.uniform).Set(face_colors)
+
+    # UV primvar for texture mapping — vertex interpolation, one (u,v) per vertex.
+    st_primvar = plane.CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+    st_primvar.Set(uvs)
+
+    # Write initial grey placeholder PNGs and bind a UV-mapped material.
+    _write_grey_texture(GROUND_TEX_PATH)
+    _write_grey_texture(GROUND_TEX_PATH_ALT)
+    mat = _create_ground_material(stage, "/World/ground_material", GROUND_TEX_PATH)
+    UsdShade.MaterialBindingAPI(plane.GetPrim()).Bind(mat)
 
     UsdPhysics.MeshCollisionAPI.Apply(xform.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(plane.GetPrim())

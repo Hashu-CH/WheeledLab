@@ -99,9 +99,10 @@ events:
   base_mass_range:  [1.0, 3.0]
   wheel_mass_range: [0.01, 0.3]
   spawn_yaw_offset_deg_range: [-30.0, 30.0]
-  ground_noise_sigma: 3.0               # Gaussian blur radius in grid cells
-  ground_brightness_range: [0.1, 0.5]  # greyscale lo/hi after blur
-  ground_texture_update_interval: 256  # policy steps between USD texture writes
+  ground_noise_sigma: 0.5               # Gaussian blur radius in texture pixels (0=pure pixel noise, ~3=smooth blobs)
+  ground_brightness_range: [0.2, 0.65] # skewed light to match dry cement; widens to cover oil stains / wet patches
+  ground_texture_update_interval: 256  # policy steps between texture writes
+  ground_texture_resolution: 256       # noise image size in pixels (square)
 
 # Observations
 observations:

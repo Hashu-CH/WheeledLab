@@ -111,25 +111,21 @@ def randomize_ground_texture(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
     plane_prim_path: str = "/World/ground_plane",
-    grid_resolution_m: float = 1.0,
-    noise_sigma: float = 3.0,
+    grid_resolution_m: float = 1.0,   # unused; kept so existing EventTerm params still parse
+    noise_sigma: float = 1.0,
     brightness_range: tuple = (0.1, 0.5),
     update_interval_steps: int = 256,
+    tex_resolution: int = 128,
 ):
-    """Replace the ground plane's face colors with Gaussian-blurred greyscale noise.
+    """Write a Gaussian-blurred noise PNG and update the ground plane's UV texture.
 
-    Produces a slowly-varying random texture each update, providing visual
-    domain randomization without altering track geometry or cone positions.
+    Each call generates a fresh `tex_resolution × tex_resolution` noise image and
+    writes it to one of two alternating file paths, then updates the USD texture
+    attribute so Isaac Sim reloads the image.  The alternating-path trick forces
+    USD to treat the new path as a genuinely changed attribute (cache-busting).
 
-    Debounced to at most one USD write every update_interval_steps policy
-    steps (global counter) so the cost is amortized across many resets.
-
-    Args:
-    - grid_resolution_m: must match terrain.ground_resolution_m so that the
-      cell count derived here agrees with the mesh created at USD init time.
-    - noise_sigma: Gaussian blur sigma in grid cells (larger = smoother).
-    - brightness_range: (lo, hi) greyscale clamp after blurring.
-    - update_interval_steps: minimum policy steps between USD writes.
+    noise_sigma is in texture pixels: 0 = random per-pixel noise ("pixelated"),
+    ~3 = smooth blobs.
     """
     last = getattr(env, "_last_ground_tex_step", -update_interval_steps)
     if int(env.common_step_counter) - last < update_interval_steps:
@@ -137,36 +133,32 @@ def randomize_ground_texture(
     env._last_ground_tex_step = int(env.common_step_counter)
 
     try:
-        from pxr import UsdGeom, Gf
+        from PIL import Image
+        from pxr import UsdShade, Sdf
         import omni.usd
         import scipy.ndimage
     except ImportError:
         return
 
-    stage = omni.usd.get_context().get_stage()
-    plane_prim = stage.GetPrimAtPath(plane_prim_path)
-    if not plane_prim.IsValid():
-        return
+    from ..track.generator import GROUND_TEX_PATH, GROUND_TEX_PATH_ALT, GROUND_TEX_READER_PATH
 
-    # Derive cell counts from the terrain config, mirroring generator.py.
-    cfg = env.scene.terrain.cfg
-    width  = float(cfg.width)
-    height = float(cfg.height)
-    ncols_cells = max(1, int(np.ceil(width  / grid_resolution_m)))
-    nrows_cells = max(1, int(np.ceil(height / grid_resolution_m)))
+    # Toggle between two file paths to force USD texture cache invalidation.
+    toggle = getattr(env, "_ground_tex_toggle", 0)
+    write_path = GROUND_TEX_PATH if toggle == 0 else GROUND_TEX_PATH_ALT
+    env._ground_tex_toggle = 1 - toggle
 
     lo, hi = float(brightness_range[0]), float(brightness_range[1])
-    noise   = np.random.uniform(lo, hi, size=(nrows_cells, ncols_cells)).astype(np.float32)
-    blurred = scipy.ndimage.gaussian_filter(noise, sigma=noise_sigma)
-    blurred = np.clip(blurred, lo, hi)
+    noise = np.random.uniform(lo, hi, size=(tex_resolution, tex_resolution)).astype(np.float32)
+    if noise_sigma > 0:
+        noise = scipy.ndimage.gaussian_filter(noise, sigma=float(noise_sigma))
+        noise = np.clip(noise, lo, hi)
+    img_arr = (noise * 255).astype(np.uint8)
+    Image.fromarray(img_arr, mode="L").convert("RGB").save(write_path)
 
-    # Each grid cell is 2 triangles; displayColor interpolation is "uniform"
-    # (one entry per face), so repeat each cell value twice.
-    grey_per_cell = blurred.ravel()                     # (nrows_cells * ncols_cells,)
-    grey_per_face = np.repeat(grey_per_cell, 2)         # (n_faces,)
-    colors = [Gf.Vec3f(float(v), float(v), float(v)) for v in grey_per_face]
-
-    UsdGeom.Mesh(plane_prim).GetDisplayColorAttr().Set(colors)
+    stage = omni.usd.get_context().get_stage()
+    tex_prim = stage.GetPrimAtPath(GROUND_TEX_READER_PATH)
+    if tex_prim.IsValid():
+        UsdShade.Shader(tex_prim).GetInput("file").Set(Sdf.AssetPath(write_path))
 
 
 # Lighting randomization
@@ -281,10 +273,9 @@ class RacingEventsRandomCfg(RacingEventsCfg):
         func=randomize_ground_texture,
         mode="reset",
         params={
-            "plane_prim_path": "/World/ground_plane",
-            "grid_resolution_m": float(_TER.get("ground_resolution_m", 1.0)),
-            "noise_sigma":         float(_EV.get("ground_noise_sigma", 3.0)),
-            "brightness_range":    tuple(_EV.get("ground_brightness_range", [0.1, 0.5])),
+            "noise_sigma":           float(_EV.get("ground_noise_sigma", 1.0)),
+            "brightness_range":      tuple(_EV.get("ground_brightness_range", [0.1, 0.5])),
             "update_interval_steps": int(_EV.get("ground_texture_update_interval", 256)),
+            "tex_resolution":        int(_EV.get("ground_texture_resolution", 128)),
         },
     )
