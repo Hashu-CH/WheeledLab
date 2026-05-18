@@ -8,9 +8,11 @@ Or run inside Isaac Sim Python if OmniPBR materials are needed.  The script
 uses only core USD libraries so it works standalone; materials are set via
 displayColor primvar which Isaac Sim respects for basic shading.
 
-Cone geometry: 6" agility training cone — 0.15 m tall, 0.05 m base radius.
-Sized to match real off-the-shelf 6-inch training cones (~$1/cone in 25-packs)
-so sim-to-real visual transfer matches the cones we'd use in physical testing.
+Cone geometry: 12" traffic / delineator cone — 0.305 m tall, 0.095 m base radius
+(~19 cm wide base). Sized to match real off-the-shelf 12-inch traffic cones
+(~$3-5/cone in 10-25 packs) so sim-to-real visual transfer matches the cones
+we'd use in physical testing. Picked over 6" agility cones because they read
+more reliably in the low-resolution policy camera.
 """
 
 import math
@@ -66,7 +68,7 @@ def _write_cone_usd(path: str, color: tuple[float, float, float]):
     mesh = UsdGeom.Mesh.Define(stage, "/Cone/cone_mesh")
 
     points, face_counts, face_indices = _cone_mesh_data(
-        base_radius=0.05, height=0.15, segments=16
+        base_radius=0.095, height=0.305, segments=16
     )
     mesh.GetPointsAttr().Set(points)
     mesh.GetFaceVertexCountsAttr().Set(face_counts)
