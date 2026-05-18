@@ -8,7 +8,9 @@ Or run inside Isaac Sim Python if OmniPBR materials are needed.  The script
 uses only core USD libraries so it works standalone; materials are set via
 displayColor primvar which Isaac Sim respects for basic shading.
 
-Cone geometry: 2-inch hobby/RC traffic cone — 0.051 m tall, 0.025 m base radius.
+Cone geometry: scaled FSAE-style cone — 0.10 m tall, 0.04 m base radius
+(~1/3 the width of the MuSHR car so cones read clearly in the policy camera
+without dominating the scene).
 """
 
 import math
@@ -63,9 +65,8 @@ def _write_cone_usd(path: str, color: tuple[float, float, float]):
 
     mesh = UsdGeom.Mesh.Define(stage, "/Cone/cone_mesh")
 
-    # 2-inch RC/hobby traffic cone: 2 in = 0.051 m tall, 1 in base radius
     points, face_counts, face_indices = _cone_mesh_data(
-        base_radius=0.025, height=0.051, segments=16
+        base_radius=0.04, height=0.10, segments=16
     )
     mesh.GetPointsAttr().Set(points)
     mesh.GetFaceVertexCountsAttr().Set(face_counts)
