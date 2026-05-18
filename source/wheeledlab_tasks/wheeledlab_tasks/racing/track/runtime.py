@@ -1,28 +1,34 @@
 """
-Runtime component to RacingTerrainImporterCfg. 
+Runtime component to RacingTerrainImporterCfg.
 
-Must live off cfg since torch buffers are non-serializable (OmegaConf and 
-Hydra requirement). 
+Must live off cfg since torch buffers are non-serializable (OmegaConf and
+Hydra requirement).
 
 Notes:
 
-- RacingTerrainImporterCfg.configure() runs during scene cfg post_init,
-  writes the USD, and stashes the TrackCache in _PENDING_CACHE.
+- RacingTerrainImporterCfg.configure() runs during scene cfg post_init and
+  only does cheap sizing math (map dims, usd_path). No USD is written.
 
-- InteractiveScene instantiation calls cfg.class_type(RacingTerrainImporter)
-  which calls this init. Importantly before any call to sim events.
+- InteractiveScene instantiation calls cfg.class_type(cfg) == this class.
+  We author the track USD here (writes file at cfg.usd_path) and then call
+  the base TerrainImporter, which loads that file. The returned TrackCache
+  is stored on self for reward/event funcs.
 
-Call sites (reward/event funcs) read env.scene.terrain.<method> 
+  This deferral keeps `import wheeledlab_rl` cheap — track authoring used
+  to fire at module import time via __post_init__, which got expensive
+  with cone PointInstancers across many envs.
+
+Call sites (reward/event funcs) read env.scene.terrain.<method>
 """
 
-from __future__ import annotations 
+from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
 
 from isaaclab.terrains import TerrainImporter
 
-from .generator import TrackCache
+from .generator import TrackCache, create_track_geometry
 from .projection import project_nearest_segment, sample_poses_along_polylines
 
 # avoid ciruclar import
@@ -30,34 +36,21 @@ if TYPE_CHECKING:
     from ..mushr_racing_env_cfg import RacingTerrainImporterCfg, InitialPoseCfg
 
 
-# Populated by configure(); cleared by RacingTerrainImporter.__init__.
-_PENDING_CACHE: TrackCache | None = None
-
-# Holds cache until terrain importer inits via InteractiveScene
-def stash_track_cache(cache: TrackCache) -> None:
-    global _PENDING_CACHE
-    _PENDING_CACHE = cache
-
-# I don't really like this. Track utils have to live here since the track 
+# I don't really like this. Track utils have to live here since the track
 # cache state is exposed and can't be in other functions like rewards.
 class RacingTerrainImporter(TerrainImporter):
     """TerrainImporter that carries per-tile track geometry for racing rewards."""
 
     # init called on InteractiveScene Env construction
     def __init__(self, cfg: "RacingTerrainImporterCfg"):
-        global _PENDING_CACHE
-        super().__init__(cfg) # do typical terrain importer job
-
-        # init track buffers
-        cache = _PENDING_CACHE
-        _PENDING_CACHE = None
-        if cache is None:
-            raise RuntimeError(
-                "RacingTerrainImporter: no track cache staged for this cfg. "
-                "Make sure RacingTerrainImporterCfg.configure(num_envs) runs "
-                "before the scene instantiates the terrain."
-            )
-        self.track_cache: TrackCache = cache
+        # Author the USD on disk before the base class loads cfg.usd_path.
+        # cfg.configure(num_envs) must have run earlier to set the sizing fields.
+        track_cache = create_track_geometry(
+            cfg.usd_path, cfg.map_size, cfg.spacing, cfg.env_size,
+            cfg.color_sampling, cfg.tile_padding_cells,
+        )
+        super().__init__(cfg)  # base class loads cfg.usd_path
+        self.track_cache: TrackCache = track_cache
         self._polylines_t: torch.Tensor | None = None
         self._tangents_t: torch.Tensor | None = None
         self._segment_valid_t: torch.Tensor | None = None

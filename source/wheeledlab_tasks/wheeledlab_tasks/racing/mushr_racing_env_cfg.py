@@ -11,9 +11,10 @@ Notes:
   reward projections. The env_id == tile_id invariant is what lets each env
   index into its own track's cache — it doesn't require separate origins.
 - Lifecycle: MushrRacingSceneCfg.__post_init__ calls terrain.configure(num_envs),
-  which writes the USD and stages the TrackCache. Isaac Lab then instantiates
-  cfg.class_type(cfg) == RacingTerrainImporter, which pops the cache off the
-  stash and holds it for the env's lifetime.
+  which only fills cheap sizing fields (map dims, usd_path). The heavy
+  USD authoring + TrackCache build is deferred to RacingTerrainImporter.__init__,
+  which runs when Isaac Lab instantiates cfg.class_type(cfg) during
+  InteractiveScene build. The importer then holds the cache for the env's lifetime.
 
 Warning: 
 
@@ -42,8 +43,6 @@ from wheeledlab_tasks.common import Mushr4WDActionCfg
 from .config import CONFIG
 from .track import (
     RacingTerrainImporter,
-    stash_track_cache,
-    create_track_geometry,
     compute_map_size,
 )
 from .mdp import (
@@ -131,8 +130,12 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
     debug_vis = False
 
     def configure(self, num_envs: int):
-        """Populate map-sizing fields, write the track USD, and stage the
-        per-tile track cache for the paired RacingTerrainImporter runtime.
+        """Populate map-sizing fields. Cheap — safe to run at config-parse time.
+
+        Heavy USD authoring (and the resulting TrackCache) is deferred to
+        RacingTerrainImporter.__init__, which runs when InteractiveScene
+        actually instantiates the terrain. That keeps `import wheeledlab_rl`
+        from writing a multi-thousand-cone USD just to register a task.
 
         Called from MushrRacingSceneCfg after num envs is initialized.
 
@@ -147,12 +150,6 @@ class RacingTerrainImporterCfg(TerrainImporterCfg):
             WHEELEDLAB_ASSETS_DATA_DIR, 'rgb_maps', time.strftime("%Y%m%d_%H%M%S.usd"),
         )
         self.usd_path = self.file_name
-        track_cache = create_track_geometry(
-            self.file_name, self.map_size, self.spacing, self.env_size,
-            self.color_sampling, self.tile_padding_cells,
-        )
-        # Hand off to RacingTerrainImporter.__init__, which pops it at scene-build time.
-        stash_track_cache(track_cache)
 
 
 # ---------------------------------------------------------------------------

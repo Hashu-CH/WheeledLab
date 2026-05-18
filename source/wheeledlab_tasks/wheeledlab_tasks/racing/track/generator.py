@@ -506,7 +506,10 @@ def create_track_geometry(file_path, map_size, spacing, env_size, color_sampling
     plane.GetFaceVertexIndicesAttr().Set(faces)
 
     # UV primvar for texture mapping — vertex interpolation, one (u,v) per vertex.
-    st_primvar = plane.CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+    # Newer USD removed UsdGeom.Mesh.CreatePrimvar; go through PrimvarsAPI.
+    st_primvar = UsdGeom.PrimvarsAPI(plane).CreatePrimvar(
+        "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex
+    )
     st_primvar.Set(uvs)
 
     # Write initial grey placeholder PNGs and bind a UV-mapped material.
