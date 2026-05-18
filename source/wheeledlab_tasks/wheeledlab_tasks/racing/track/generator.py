@@ -51,11 +51,12 @@ GROUND_TEX_READER_PATH = "/World/ground_material/TexReader"
 
 
 def _write_grey_texture(path: str, resolution: int = 128, value: int = 77) -> None:
-    """Write a solid grey 8-bit PNG using only stdlib.
+    """Write a solid grey 8-bit RGB PNG using only stdlib.
 
-    Stdlib-only so a missing PIL install doesn't silently leave a 0-byte file
-    that GPU/Hydra later fails to load. Errors are NOT swallowed; if the write
-    fails the caller should know.
+    RGB (color type 2), not greyscale, because Omniverse's gpu.foundation
+    texture loader treats 1-channel PNGs as "empty file" and refuses them.
+    Stdlib-only so a missing PIL install can't silently leave a 0-byte file.
+    Errors are NOT swallowed; if the write fails the caller should know.
     """
     import struct
     import zlib
@@ -64,10 +65,11 @@ def _write_grey_texture(path: str, resolution: int = 128, value: int = 77) -> No
         crc = zlib.crc32(tag + data) & 0xFFFFFFFF
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
 
-    # IHDR: 8-bit greyscale (color type 0).
-    ihdr = struct.pack(">IIBBBBB", resolution, resolution, 8, 0, 0, 0, 0)
-    # IDAT: each scanline = filter byte (0=None) + pixel row.
-    row = b"\x00" + bytes([value]) * resolution
+    # IHDR: 8-bit RGB (color type 2).
+    ihdr = struct.pack(">IIBBBBB", resolution, resolution, 8, 2, 0, 0, 0)
+    # IDAT: each scanline = filter byte (0=None) + 3 bytes (R,G,B) per pixel.
+    pixel = bytes([value, value, value])
+    row = b"\x00" + pixel * resolution
     idat = zlib.compress(row * resolution, 9)
 
     png = (b"\x89PNG\r\n\x1a\n"
