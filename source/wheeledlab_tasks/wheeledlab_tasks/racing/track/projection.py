@@ -118,7 +118,8 @@ def sample_poses_along_polylines(
   polylines = track_cache.polylines_w
   tangents = track_cache.tangents_w
   segment_valid = track_cache.segment_valid
-  track_widths = track_cache.track_widths_m
+  left_half  = track_cache.left_half_widths_m
+  right_half = track_cache.right_half_widths_m
 
   poses = []
   for k in range(num_poses):
@@ -130,7 +131,7 @@ def sample_poses_along_polylines(
           fallback_yaw = float(np.random.uniform(*yaw_offset_deg_range))
           poses.append((0.0, 0.0, fallback_yaw % 360.0))
           continue
-      
+
       # sample a segment and lerp param t on segment
       seg_idx = int(np.random.choice(valid_indices))
       t = float(np.random.uniform(0, 1))
@@ -139,14 +140,21 @@ def sample_poses_along_polylines(
       p1 = polylines[tile_idx, seg_idx + 1]
       foot_w = p0 + t * (p1 - p0)
 
-      # Lateral offset perpendicular to the tangent
+      # Lateral offset perpendicular to the tangent. Asymmetric bounds match
+      # the per-segment clamped corridor so spawns never start outside cones.
       tangent = tangents[tile_idx, seg_idx]
       n_hat = np.array([-tangent[1], tangent[0]], dtype=np.float32)
-      band = max(
-          0.0,
-          (float(track_widths[tile_idx]) - car_width_m) * 0.5 - margin_m,
-      )
-      lateral = float(np.random.uniform(-band, band))
+      lerp = lambda a, b: float((1.0 - t) * a + t * b)
+      left_hw  = lerp(left_half[tile_idx, seg_idx],  left_half[tile_idx, seg_idx + 1])
+      right_hw = lerp(right_half[tile_idx, seg_idx], right_half[tile_idx, seg_idx + 1])
+      keepout = car_width_m * 0.5 + margin_m
+      lo = -right_hw + keepout
+      hi =  left_hw  - keepout
+      if hi < lo:
+          # Corridor too tight for the car at this point — center on the line.
+          lateral = 0.0
+      else:
+          lateral = float(np.random.uniform(lo, hi))
 
       world_pos = foot_w + lateral * n_hat
       tangent_yaw_deg = float(np.degrees(np.arctan2(tangent[1], tangent[0])))

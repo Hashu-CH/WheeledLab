@@ -51,14 +51,16 @@ def compute_progress_step(env) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor
 def within_cones_mask(env) -> torch.Tensor:
     """(num_envs,) bool — True when the car is within the cone-defined track boundary.
 
-    Uses the signed lateral distance from centerline projection; the car is
-    inside the track when abs(d_signed) <= track_width / 2.
+    Asymmetric on tight turns: on a CCW turn the left side's clamped half-width
+    is smaller than the right's, so the same `d_signed` cutoff would punish the
+    car for being on the outer side even when the outer cone is still far. The
+    bounds here are the per-arc-length cone offsets stored in the TrackCache.
     """
     terrain = env.scene.terrain
     env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
     root_pos = mdp.root_pos_w(env)[..., :2]
-    d_signed, _, track_widths, _, _ = terrain.project_to_centerline(root_pos, env_ids)
-    return d_signed.abs() <= (track_widths * 0.5)
+    d_signed, _, (left_hw, right_hw), _, _ = terrain.project_to_centerline(root_pos, env_ids)
+    return (d_signed <= left_hw) & (d_signed >= -right_hw)
 
 
 # ---------------------------------------------------------------------------

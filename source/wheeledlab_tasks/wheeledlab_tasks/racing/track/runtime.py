@@ -54,7 +54,8 @@ class RacingTerrainImporter(TerrainImporter):
         self._polylines_t: torch.Tensor | None = None
         self._tangents_t: torch.Tensor | None = None
         self._segment_valid_t: torch.Tensor | None = None
-        self._track_widths_t: torch.Tensor | None = None
+        self._left_half_widths_t: torch.Tensor | None = None
+        self._right_half_widths_t: torch.Tensor | None = None
         self._tile_origins_t: torch.Tensor | None = None
         self._segment_lengths_t: torch.Tensor | None = None
         self._cumulative_arc_t: torch.Tensor | None = None
@@ -77,7 +78,8 @@ class RacingTerrainImporter(TerrainImporter):
         self._polylines_t = torch.as_tensor(tc.polylines_w, dtype=torch.float32, device=device)
         self._tangents_t = torch.as_tensor(tc.tangents_w, dtype=torch.float32, device=device)
         self._segment_valid_t = torch.as_tensor(tc.segment_valid, dtype=torch.bool, device=device)
-        self._track_widths_t = torch.as_tensor(tc.track_widths_m, dtype=torch.float32, device=device)
+        self._left_half_widths_t  = torch.as_tensor(tc.left_half_widths_m,  dtype=torch.float32, device=device)
+        self._right_half_widths_t = torch.as_tensor(tc.right_half_widths_m, dtype=torch.float32, device=device)
         self._tile_origins_t = torch.as_tensor(tc.tile_origins_w, dtype=torch.float32, device=device)
         self._segment_lengths_t = torch.as_tensor(tc.segment_lengths_m, dtype=torch.float32, device=device)
         self._cumulative_arc_t = torch.as_tensor(tc.cumulative_arc_lengths_m, dtype=torch.float32, device=device)
@@ -89,7 +91,7 @@ class RacingTerrainImporter(TerrainImporter):
     # ------------------------------------------------------------------
     def project_to_centerline(
         self, poses_xy_w: torch.Tensor, env_ids: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor], torch.Tensor, torch.Tensor]:
         """Centerline projection with arc-length along the polyline.
 
         Args:
@@ -99,18 +101,22 @@ class RacingTerrainImporter(TerrainImporter):
         Returns:
         - d_signed: (N,) signed perpendicular distance, pos = left of tangent
         - tangent_xy: (N, 2) unit tangent (approx) at the winning segment
-        - track_width: (N,) world-meter track width per env
+        - half_widths: tuple (left_half_w, right_half_w) each (N,) in meters,
+          interpolated at the projected foot. On a CCW turn, left_half_w is
+          the clamped inner side; on a CW turn it's right_half_w. Off-track
+          test is asymmetric: inside iff -right_half_w <= d_signed <= left_half_w.
         - arc_length: (N,) world-meter arc-length along the polyline at the
           projected foot, in [0, total_length]
         - seg_idx: (N,) winning segment index
         """
-        self._ensure_track_tensors(poses_xy_w.device) 
+        self._ensure_track_tensors(poses_xy_w.device)
 
         # unpack
         polylines = self._polylines_t[env_ids]
         tangents = self._tangents_t[env_ids]
         valid = self._segment_valid_t[env_ids]
-        track_widths = self._track_widths_t[env_ids]
+        left_hw  = self._left_half_widths_t[env_ids]   # (N, M)
+        right_hw = self._right_half_widths_t[env_ids]  # (N, M)
         cumulative = self._cumulative_arc_t[env_ids]
         seg_lengths = self._segment_lengths_t[env_ids]
 
@@ -120,7 +126,18 @@ class RacingTerrainImporter(TerrainImporter):
         seg_start_arc = cumulative.gather(1, seg_idx.unsqueeze(-1)).squeeze(-1)
         seg_len = seg_lengths.gather(1, seg_idx.unsqueeze(-1)).squeeze(-1)
         arc_length = seg_start_arc + t_param * seg_len
-        return d_signed, nearest_tangent, track_widths, arc_length, seg_idx
+
+        # Lerp per-vertex widths across the winning segment using t_param.
+        idx0 = seg_idx.unsqueeze(-1)
+        idx1 = (seg_idx + 1).unsqueeze(-1)
+        left_a  = left_hw.gather(1, idx0).squeeze(-1)
+        left_b  = left_hw.gather(1, idx1).squeeze(-1)
+        right_a = right_hw.gather(1, idx0).squeeze(-1)
+        right_b = right_hw.gather(1, idx1).squeeze(-1)
+        left_half_at  = left_a  + t_param * (left_b  - left_a)
+        right_half_at = right_a + t_param * (right_b - right_a)
+
+        return d_signed, nearest_tangent, (left_half_at, right_half_at), arc_length, seg_idx
 
 
     def update_progress(self, env_ids: torch.Tensor, root_pos_xy_w: torch.Tensor) -> torch.Tensor:

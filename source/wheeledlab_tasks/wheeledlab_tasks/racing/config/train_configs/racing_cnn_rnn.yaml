@@ -18,11 +18,12 @@ terrain:
   car_width_m: 0.28
   difficulty_range: [0, .9]
   phase_boundary: 0.0
-  track_width_cells: 5
   steps_per_segment: 40
   margin_frac: 0.1
-  cone_spacing_m: 0.4        # nominal arc-length spacing; denser on turns
-  track_width_m: 0.45       # full corridor width, left cone to right cone
+  cone_spacing_m: 0.6        # nominal arc-length spacing; denser on turns
+  track_width_m: 0.7        # full L-to-R cone corridor — ~2.5x car_width_m. Single
+                            # source of truth: cones, reward, AND routing planner
+                            # all derive from it.
   cone_curvature_scale: 2.0 # density multiplier on turns; 0 = uniform spacing
   tile_padding_cells: 10    # gap cells between tiles (~2.5 m at 0.25 m/cell)
   ground_resolution_m: 1.0  # ground grid cell size for texture DR

@@ -50,13 +50,33 @@ GROUND_TEX_PATH_ALT = "/tmp/wheeledlab_ground_tex_b.png"
 GROUND_TEX_READER_PATH = "/World/ground_material/TexReader"
 
 
-def _write_grey_texture(path: str, resolution: int = 128) -> None:
-    """Write a solid mid-grey placeholder PNG for the initial USD texture."""
-    try:
-        from PIL import Image
-        Image.new("L", (resolution, resolution), color=77).convert("RGB").save(path)
-    except Exception:
-        pass
+def _write_grey_texture(path: str, resolution: int = 128, value: int = 77) -> None:
+    """Write a solid grey 8-bit PNG using only stdlib.
+
+    Stdlib-only so a missing PIL install doesn't silently leave a 0-byte file
+    that GPU/Hydra later fails to load. Errors are NOT swallowed; if the write
+    fails the caller should know.
+    """
+    import struct
+    import zlib
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(tag + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", crc)
+
+    # IHDR: 8-bit greyscale (color type 0).
+    ihdr = struct.pack(">IIBBBBB", resolution, resolution, 8, 0, 0, 0, 0)
+    # IDAT: each scanline = filter byte (0=None) + pixel row.
+    row = b"\x00" + bytes([value]) * resolution
+    idat = zlib.compress(row * resolution, 9)
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + _chunk(b"IHDR", ihdr)
+           + _chunk(b"IDAT", idat)
+           + _chunk(b"IEND", b""))
+
+    with open(path, "wb") as f:
+        f.write(png)
 
 
 def _create_ground_material(stage, mat_path: str, tex_file_path: str):
@@ -108,7 +128,11 @@ class TrackCache:
     total_lengths_m: np.ndarray # (num_tiles,), float32, last valid cumulative length per polyline
     is_closed: np.ndarray # (num_tiles,), bool, True for closed-loop tracks
     segment_valid: np.ndarray # (num_tiles, M_max - 1), bool
-    track_widths_m: np.ndarray # (num_tiles,), meters
+    # Per-vertex clamped half-widths after inner-curve clamp; off-track reward
+    # checks d_signed against these (left = car on CCW-normal side of tangent).
+    # Padded with 0 past valid polyline length; never queried there.
+    left_half_widths_m: np.ndarray  # (num_tiles, M_max), float32
+    right_half_widths_m: np.ndarray # (num_tiles, M_max), float32
     tile_origins_w: np.ndarray # (num_tiles, 2), world-meter tile centers
     tile_extent_m: tuple[float, float] # (x_extent, y_extent) per tile, meters (fixed here)
     tile_cell_bounds: np.ndarray # (num_tiles, 4): row_start, row_end, col_start, col_end
@@ -117,6 +141,48 @@ class TrackCache:
 # ---------------------------------------------------------------------------
 # Cone placement helpers
 # ---------------------------------------------------------------------------
+
+# Safety margin (m) between inner cone and the arc's center of curvature.
+# Also the floor on inner half-width: prevents inner cones from collapsing
+# onto the centerline on extreme hairpins (radius < INNER_SAFETY_M).
+# Shared by cone placement and the per-vertex width cache so the cones the
+# car sees match the corridor the reward enforces.
+INNER_SAFETY_M = 0.05
+
+
+def _per_vertex_half_widths(
+    polyline_w: np.ndarray,    # (M, 2)
+    half_width_m: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-vertex (kappa_signed, left_half_w, right_half_w) after inner-curve clamp.
+
+    On a turn with local radius R = 1/|kappa| < half_width_m, the inner cone
+    would cross the centerline if placed at the nominal half_width_m. We
+    clamp the inner half-width to (R - INNER_SAFETY_M), floored at
+    INNER_SAFETY_M. The outer side keeps half_width_m. On straights/gentle
+    turns both sides equal half_width_m. Sign convention: kappa > 0 = CCW.
+    """
+    M = len(polyline_w)
+    if M < 3:
+        return (np.zeros(M, dtype=np.float32),
+                np.full(M, half_width_m, dtype=np.float32),
+                np.full(M, half_width_m, dtype=np.float32))
+    diffs = np.diff(polyline_w, axis=0)
+    seg_lens = np.linalg.norm(diffs, axis=1)
+    safe_lens = np.where(seg_lens > 0, seg_lens, 1.0)
+    tans = diffs / safe_lens[:, None]
+    cross_signed = tans[:-1, 0] * tans[1:, 1] - tans[:-1, 1] * tans[1:, 0]
+    avg_len = 0.5 * (seg_lens[:-1] + seg_lens[1:])
+    kappa_v = np.zeros(M, dtype=np.float64)
+    kappa_v[1:-1] = cross_signed / np.maximum(avg_len, 1e-6)
+
+    abs_k = np.abs(kappa_v)
+    radius = np.where(abs_k > 1e-6, 1.0 / np.maximum(abs_k, 1e-6), np.inf)
+    inner = np.minimum(half_width_m, np.maximum(radius - INNER_SAFETY_M, INNER_SAFETY_M))
+    left  = np.where(kappa_v > 0, inner, half_width_m).astype(np.float32)
+    right = np.where(kappa_v < 0, inner, half_width_m).astype(np.float32)
+    return kappa_v.astype(np.float32), left, right
+
 
 def _compute_cone_positions(
     polyline_w: np.ndarray,       # (M, 2) world-meter centerline
@@ -134,6 +200,11 @@ def _compute_cone_positions(
     clamped to cone_spacing_m / 4 as a minimum, giving ~4× peak density on
     the tightest corners without arbitrarily small steps on near-zero-radius
     numerical artifacts.
+
+    Inner-curve clamping (see _per_vertex_half_widths): on hairpins the inner
+    side's half-width shrinks toward the centerline so cones never cross to
+    the opposite side. The same per-vertex widths are stored on the TrackCache,
+    so the reward boundary matches the visible cone gate exactly.
     """
     if len(polyline_w) < 2:
         return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
@@ -146,22 +217,17 @@ def _compute_cone_positions(
     if total_len < cone_spacing_m:
         return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
 
+    # Per-vertex curvature + clamped widths; reused by the reward via TrackCache.
+    kappa_v_signed, left_v, right_v = _per_vertex_half_widths(polyline_w, half_width_m)
+    kappa_v_abs = np.abs(kappa_v_signed)
+
     # --- Sample arc positions ------------------------------------------------
     if curvature_scale > 0.0 and len(polyline_w) >= 3:
-        # Per-vertex curvature: |cross(tan_i, tan_{i+1})| / avg_seg_len
-        safe_lens = np.where(seg_lens > 0, seg_lens, 1.0)
-        tans = diffs / safe_lens[:, None]                       # (M-1, 2) unit tangents
-        cross = tans[:-1, 0] * tans[1:, 1] - tans[:-1, 1] * tans[1:, 0]  # (M-2,)
-        avg_len = 0.5 * (seg_lens[:-1] + seg_lens[1:])
-        kappa_interior = np.abs(cross) / np.maximum(avg_len, 1e-6)  # rad/m at interior verts
-        kappa_v = np.zeros(len(polyline_w))
-        kappa_v[1:-1] = kappa_interior
-
         min_spacing = cone_spacing_m / 4.0
         arc_positions = [0.0]
         pos = 0.0
         while True:
-            kappa = float(np.interp(pos, cum_len, kappa_v))
+            kappa = float(np.interp(pos, cum_len, kappa_v_abs))
             step = max(min_spacing, cone_spacing_m / (1.0 + curvature_scale * kappa))
             pos += step
             if pos >= total_len - 1e-6:
@@ -187,8 +253,13 @@ def _compute_cone_positions(
     left_n  = np.stack([-tan[:, 1],  tan[:, 0]], axis=1)
     right_n = np.stack([ tan[:, 1], -tan[:, 0]], axis=1)
 
-    left_pos  = sample_pts + half_width_m * left_n
-    right_pos = sample_pts + half_width_m * right_n
+    # Interpolate per-vertex widths onto sample arcs so cones sit at the same
+    # offsets the runtime reward will recover from the TrackCache.
+    left_half_w  = np.interp(sample_arcs, cum_len, left_v)
+    right_half_w = np.interp(sample_arcs, cum_len, right_v)
+
+    left_pos  = sample_pts + left_half_w[:, None]  * left_n
+    right_pos = sample_pts + right_half_w[:, None] * right_n
 
     return left_pos.astype(np.float32), right_pos.astype(np.float32)
 
@@ -347,15 +418,19 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     # init structs for track data cache
     num_tiles = num_env_rows * num_env_cols
     tile_polylines_w: list[np.ndarray] = [] # world-meter polylines per tile
-    tile_track_widths_m: list[float] = [] # world-meter track width per tile
+    tile_left_half_widths_m: list[np.ndarray] = []  # per-vertex clamped left half-width
+    tile_right_half_widths_m: list[np.ndarray] = [] # per-vertex clamped right half-width
     tile_is_closed: list[bool] = [] # True for closed-loop tracks (phase 2)
     tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
     tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
     cone_spacing_m    = float(_TER.get("cone_spacing_m", 1.5))
     curvature_scale   = float(_TER.get("cone_curvature_scale", 0.0))
-    # track_width_m: full L-cone to R-cone corridor width; falls back to
-    # track_width_cells * spacing when not set.
-    _track_width_cfg  = float(_TER.get("track_width_m", 0.0))
+    # track_width_m is the single source of truth for the full L-cone to R-cone
+    # corridor width. Cones, reward, and the routing planner all derive from it.
+    # Planner gets a discrete cell count; ceil keeps the planner corridor >= the
+    # cone corridor so routing never thinks it has less room than the gate allows.
+    _track_width_m = float(_TER["track_width_m"])
+    _planner_track_cells = max(1, int(np.ceil(_track_width_m / row_spacing)))
     left_boundary_positions: list[np.ndarray] = []
     right_boundary_positions: list[np.ndarray] = []
 
@@ -376,7 +451,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
                 difficulty=np.random.uniform(float(_diff_lo), float(_diff_hi)),
                 phase_boundary=float(_TER["phase_boundary"]),
                 steps_per_segment=int(_TER["steps_per_segment"]),
-                track_width=int(_TER["track_width_cells"]),
+                track_width=_planner_track_cells,
                 margin_frac=float(_TER["margin_frac"]),
             )
             config.resolve()  # resolve upfront so we can capture config.track_width per-tile
@@ -389,12 +464,15 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
             world_y = (poly_cells[:, 1] + track_start_row - num_rows / 2.0) * row_spacing
             tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
 
-            # track_width_m: full L-to-R corridor; halve it for cone offset.
-            # Falls back to track_width_cells * spacing when not set.
-            cells_half_w = float(config.track_width) * row_spacing / 2.0
-            cone_half_w = _track_width_cfg / 2.0 if _track_width_cfg > 0.0 else cells_half_w
-            tile_track_widths_m.append(cone_half_w * 2.0)
+            # Cones sit at ±cone_half_w from the centerline on straights; on
+            # tight turns the inner side is clamped (see _per_vertex_half_widths).
+            # Per-vertex widths feed both cone authoring and the off-track reward.
+            cone_half_w = _track_width_m / 2.0
             tile_is_closed.append(not config.is_chain)
+
+            _, left_v, right_v = _per_vertex_half_widths(tile_polylines_w[-1], cone_half_w)
+            tile_left_half_widths_m.append(left_v)
+            tile_right_half_widths_m.append(right_v)
 
             left_pos, right_pos = _compute_cone_positions(
                 tile_polylines_w[-1], cone_half_w, cone_spacing_m, curvature_scale
@@ -416,10 +494,16 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
             )
 
     # Pad polylines to uniform shape with NaN; build tangents + segment-valid mask.
+    # Half-widths are 0-padded past the valid length — never queried there because
+    # seg_idx comes from argmin over segment_valid.
     M_max = max(len(p) for p in tile_polylines_w)
     polylines_w = np.full((num_tiles, M_max, 2), np.nan, dtype=np.float32)
+    left_half_widths_m = np.zeros((num_tiles, M_max), dtype=np.float32)
+    right_half_widths_m = np.zeros((num_tiles, M_max), dtype=np.float32)
     for k, pl in enumerate(tile_polylines_w):
         polylines_w[k, :len(pl)] = pl
+        left_half_widths_m[k, :len(pl)] = tile_left_half_widths_m[k]
+        right_half_widths_m[k, :len(pl)] = tile_right_half_widths_m[k]
 
     # Tangent approximations
     diffs = polylines_w[:, 1:] - polylines_w[:, :-1] # (num_tiles, M_max-1, 2)
@@ -451,7 +535,8 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
         total_lengths_m=total_lengths_m,
         is_closed=np.asarray(tile_is_closed, dtype=bool),
         segment_valid=segment_valid,
-        track_widths_m=np.asarray(tile_track_widths_m, dtype=np.float32),
+        left_half_widths_m=left_half_widths_m,
+        right_half_widths_m=right_half_widths_m,
         tile_origins_w=tile_origins_w,
         tile_extent_m=(env_num_cols * col_spacing, env_num_rows * row_spacing),
         tile_cell_bounds=tile_cell_bounds,
