@@ -1,5 +1,5 @@
 """
-Generate orange_cone.usd and blue_cone.usd as simple procedural cone meshes.
+Generate orange_cone.usda and blue_cone.usda as simple procedural cone meshes.
 
 Run once (outside Isaac Sim) via:
     python generate_cones.py
@@ -8,8 +8,7 @@ Or run inside Isaac Sim Python if OmniPBR materials are needed.  The script
 uses only core USD libraries so it works standalone; materials are set via
 displayColor primvar which Isaac Sim respects for basic shading.
 
-Cone geometry: frustum approximated as a cylinder stack + apex, ~0.3 m tall,
-~0.15 m base radius — close to standard FSAE traffic cone proportions.
+Cone geometry: 2-inch hobby/RC traffic cone — 0.051 m tall, 0.025 m base radius.
 """
 
 import math
@@ -64,8 +63,9 @@ def _write_cone_usd(path: str, color: tuple[float, float, float]):
 
     mesh = UsdGeom.Mesh.Define(stage, "/Cone/cone_mesh")
 
+    # 2-inch RC/hobby traffic cone: 2 in = 0.051 m tall, 1 in base radius
     points, face_counts, face_indices = _cone_mesh_data(
-        base_radius=0.15, height=0.30, segments=16
+        base_radius=0.025, height=0.051, segments=16
     )
     mesh.GetPointsAttr().Set(points)
     mesh.GetFaceVertexCountsAttr().Set(face_counts)
@@ -88,8 +88,5 @@ def _write_cone_usd(path: str, color: tuple[float, float, float]):
 if __name__ == "__main__":
     out_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # FSAE orange: ~RGB(1.0, 0.45, 0.0)
-    _write_cone_usd(os.path.join(out_dir, "orange_cone.usd"), color=(1.0, 0.45, 0.0))
-
-    # FSAE blue: ~RGB(0.0, 0.25, 0.85)
-    _write_cone_usd(os.path.join(out_dir, "blue_cone.usd"), color=(0.0, 0.25, 0.85))
+    _write_cone_usd(os.path.join(out_dir, "orange_cone.usda"), color=(1.0, 0.45, 0.0))
+    _write_cone_usd(os.path.join(out_dir, "blue_cone.usda"),   color=(0.0, 0.25, 0.85))

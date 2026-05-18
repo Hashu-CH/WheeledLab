@@ -77,19 +77,23 @@ class TrackCache:
 
 def _compute_cone_positions(
     polyline_w: np.ndarray,       # (M, 2) world-meter centerline
-    track_width_m: float,
+    half_width_m: float,
     cone_spacing_m: float,
+    curvature_scale: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (left_positions, right_positions) arrays of shape (N, 2).
 
     Left/right are defined relative to the direction of travel along the
     centerline. Left = 90° CCW from tangent, right = 90° CW.
-    Positions are subsampled at approximately cone_spacing_m arc-length intervals.
+
+    When curvature_scale > 0, local spacing shrinks on tighter bends:
+        local_spacing = cone_spacing_m / (1 + curvature_scale * kappa)
+    clamped to cone_spacing_m / 4 as a minimum, giving ~4× peak density on
+    the tightest corners without arbitrarily small steps on near-zero-radius
+    numerical artifacts.
     """
     if len(polyline_w) < 2:
         return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
-
-    half = track_width_m / 2.0
 
     # Arc-length prefix sum along centerline
     diffs = np.diff(polyline_w, axis=0)                         # (M-1, 2)
@@ -99,9 +103,32 @@ def _compute_cone_positions(
     if total_len < cone_spacing_m:
         return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
 
-    # Sample positions at regular arc-length intervals
-    sample_arcs = np.arange(0.0, total_len, cone_spacing_m)
-    sample_pts  = np.stack([
+    # --- Sample arc positions ------------------------------------------------
+    if curvature_scale > 0.0 and len(polyline_w) >= 3:
+        # Per-vertex curvature: |cross(tan_i, tan_{i+1})| / avg_seg_len
+        safe_lens = np.where(seg_lens > 0, seg_lens, 1.0)
+        tans = diffs / safe_lens[:, None]                       # (M-1, 2) unit tangents
+        cross = tans[:-1, 0] * tans[1:, 1] - tans[:-1, 1] * tans[1:, 0]  # (M-2,)
+        avg_len = 0.5 * (seg_lens[:-1] + seg_lens[1:])
+        kappa_interior = np.abs(cross) / np.maximum(avg_len, 1e-6)  # rad/m at interior verts
+        kappa_v = np.zeros(len(polyline_w))
+        kappa_v[1:-1] = kappa_interior
+
+        min_spacing = cone_spacing_m / 4.0
+        arc_positions = [0.0]
+        pos = 0.0
+        while True:
+            kappa = float(np.interp(pos, cum_len, kappa_v))
+            step = max(min_spacing, cone_spacing_m / (1.0 + curvature_scale * kappa))
+            pos += step
+            if pos >= total_len - 1e-6:
+                break
+            arc_positions.append(pos)
+        sample_arcs = np.asarray(arc_positions, dtype=np.float64)
+    else:
+        sample_arcs = np.arange(0.0, total_len, cone_spacing_m)
+
+    sample_pts = np.stack([
         np.interp(sample_arcs, cum_len, polyline_w[:, 0]),
         np.interp(sample_arcs, cum_len, polyline_w[:, 1]),
     ], axis=1)                                                   # (N, 2)
@@ -111,15 +138,14 @@ def _compute_cone_positions(
     tan_norm = np.linalg.norm(tan, axis=1, keepdims=True)
     tan_norm = np.where(tan_norm > 0, tan_norm, 1.0)
     tan = tan / tan_norm                                         # unit tangents
-    # Duplicate last tangent so shapes align with sample_pts
     tan = np.concatenate([tan, tan[[-1]]], axis=0)              # (N, 2)
 
     # Left normal = CCW 90°: (tx, ty) -> (-ty, tx)
     left_n  = np.stack([-tan[:, 1],  tan[:, 0]], axis=1)
     right_n = np.stack([ tan[:, 1], -tan[:, 0]], axis=1)
 
-    left_pos  = sample_pts + half * left_n
-    right_pos = sample_pts + half * right_n
+    left_pos  = sample_pts + half_width_m * left_n
+    right_pos = sample_pts + half_width_m * right_n
 
     return left_pos.astype(np.float32), right_pos.astype(np.float32)
 
@@ -257,7 +283,10 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     tile_is_closed: list[bool] = [] # True for closed-loop tracks (phase 2)
     tile_origins_w = np.zeros((num_tiles, 2), dtype=np.float32)
     tile_cell_bounds = np.zeros((num_tiles, 4), dtype=np.int32)
-    cone_spacing_m = float(_TER.get("cone_spacing_m", 1.5))
+    cone_spacing_m   = float(_TER.get("cone_spacing_m", 1.5))
+    curvature_scale  = float(_TER.get("cone_curvature_scale", 0.0))
+    # cone_half_width_m: explicit override; falls back to track_width_cells * spacing / 2
+    _cone_half_width_cfg = float(_TER.get("cone_half_width_m", 0.0))
     left_boundary_positions: list[np.ndarray] = []
     right_boundary_positions: list[np.ndarray] = []
 
@@ -291,14 +320,15 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
             world_y = (poly_cells[:, 1] + track_start_row - num_rows / 2.0) * row_spacing
             tile_polylines_w.append(np.stack([world_x, world_y], axis=-1))
 
-            # Track width: cells -> meters (approximate - asymmetric dilation in rasterise
-            # means the effective corridor is ~= track_width * spacing).
-            tile_w_m = float(config.track_width) * row_spacing
-            tile_track_widths_m.append(tile_w_m)
+            # cone_half_width_m: use explicit config value if provided, otherwise
+            # derive from track_width_cells (half the full-width approximation).
+            cells_half_w = float(config.track_width) * row_spacing / 2.0
+            cone_half_w = _cone_half_width_cfg if _cone_half_width_cfg > 0.0 else cells_half_w
+            tile_track_widths_m.append(cone_half_w * 2.0)
             tile_is_closed.append(not config.is_chain)
 
             left_pos, right_pos = _compute_cone_positions(
-                tile_polylines_w[-1], tile_w_m, cone_spacing_m
+                tile_polylines_w[-1], cone_half_w, cone_spacing_m, curvature_scale
             )
             left_boundary_positions.append(left_pos)
             right_boundary_positions.append(right_pos)
