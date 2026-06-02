@@ -237,6 +237,64 @@ python source/wheeledlab_rl/scripts/train_rl.py -r <RUN_CFG_NAME>
 
 The most common subtle bug in WheeledLab development is putting scene-build-phase work in config-parse-phase code, which fires for every task on every run. If `import wheeledlab_rl.configs.runs` starts taking tens of seconds, that's the smell.
 
+## Asymmetric critic + distillation (closing the privileged→camera gap)
+
+When a privileged policy (exact cone state, `Isaac-MushrRacingPrivilegedRL-v0`)
+races well but the camera policy (`Isaac-MushrRacingRL-v0`) does not, the
+bottleneck is perception, not control. Two complementary mechanisms close that
+gap; they do **not** conflict and are applied **sequentially**.
+
+Both share a third racing task, `Isaac-MushrRacingAsymRL-v0`, whose observation
+([RacingAsymObsCfg](source/wheeledlab_tasks/wheeledlab_tasks/racing/mdp/observations.py))
+exposes two groups every step:
+
+- `policy` — camera + proprio (what the **actor** sees; identical to the normal
+  camera task, so deployment is unchanged).
+- `critic` — cones in car frame + proprio (the exact privileged state). Its
+  layout is identical to the privileged policy's training obs, so it doubles as
+  the **teacher's** input during distillation.
+
+**Asymmetric critic.** With `policy.privileged_critic: true`, the CNN/CNNGRU
+nets route the `critic` group straight into the critic's MLP/GRU, bypassing the
+image encoder ([actor_critic_cnn_gru.py](source/wheeledlab_rl/wheeledlab_rl/utils/actor_critic_cnn_gru.py)).
+The value function then sees flawless perception (low-variance value targets)
+while the actor stays camera-only. `privileged_critic` defaults to `false`, so
+every existing run is unchanged; the symmetric camera task still shares one CNN.
+The modified runner already forwards the `critic` group
+([modified_rsl_rl_runner.py](source/wheeledlab_rl/wheeledlab_rl/utils/modified_rsl_rl_runner.py)
+reads `extras["observations"]["critic"]`).
+
+**Distillation (DAgger).** [scripts/distill_policy.py](source/wheeledlab_rl/scripts/distill_policy.py)
+loads the privileged MLP as a frozen teacher, rolls out the camera student in
+the asym env, and regresses the student's actions onto the teacher's. The
+student is built/saved through the normal training runner, so its checkpoint is
+byte-compatible with `train_rl.py train.load_run=...`. (The GRU student uses
+TBPTT-length-1: hidden state is carried across steps but the gradient is
+per-step — see the script header for extending to full BPTT.)
+
+The two phases (run after a privileged teacher already exists):
+
+```bash
+ASYM=source/wheeledlab_tasks/wheeledlab_tasks/racing/config/train_configs/racing_asym.yaml
+
+# Phase A — distill teacher -> camera student
+WHEELEDLAB_RACING_CONFIG=$ASYM python source/wheeledlab_rl/scripts/distill_policy.py \
+  --teacher-run logs/<privileged run folder> --run-name racing_distill_v0
+
+# Phase B — RL fine-tune the distilled student with the privileged critic
+WHEELEDLAB_RACING_CONFIG=$ASYM python source/wheeledlab_rl/scripts/train_rl.py \
+  -r RSS_RACING_ASYM_CONFIG train.load_run=racing_distill_v0
+```
+
+Distillation solves exploration/credit-assignment (why pixel-PPO crawls); the
+asymmetric-critic RL fine-tune then closes the *imitation gap* — the teacher
+acts on state the camera can't recover (occluded/behind cones), so the student
+can't match it everywhere and RL lets it find the best camera-realizable policy.
+`racing_asym.yaml` is shared by both phases so the student architecture is
+byte-identical across the checkpoint hand-off. Note rsl_rl's single
+`empirical_normalization` flag covers both actor and critic, so it stays `false`
+here (the image actor obs should not be empirically normalized).
+
 ## Deployment
 
 This repo is sim-only. Hardware drivers, real-robot integrations, and field-test code live in a separate repo: [RealLab](https://github.com/UWRobotLearning/RealLab). It currently has branches for HOUND, MuSHR, and (coming) F1Tenth. See its README for setup instructions.

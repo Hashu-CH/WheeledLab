@@ -32,6 +32,11 @@ class MushrCNNGRUPolicyCfg:
     rnn_type: str = "gru"
     rnn_hidden_dim: int = 128
     rnn_num_layers: int = 1
+    # Asymmetric critic: when True the critic consumes the privileged `critic`
+    # obs group (cone state) directly, bypassing the CNN. Requires an env whose
+    # obs has a `critic` group (e.g. Isaac-MushrRacingAsymRL-v0). Default False
+    # keeps the symmetric shared-CNN critic.
+    privileged_critic: bool = False
 
 @configclass
 class MushrMLPPolicyCfg:
@@ -54,6 +59,8 @@ class MushrCNNPolicyCfg:
     cnn_kernel_sizes: list = (5, 3)
     cnn_strides: list = (2, 2)
     cnn_out_dim: int = 64
+    # See MushrCNNGRUPolicyCfg.privileged_critic.
+    privileged_critic: bool = False
 
 
 @configclass

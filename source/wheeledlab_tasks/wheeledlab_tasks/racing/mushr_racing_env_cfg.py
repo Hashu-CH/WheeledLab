@@ -49,6 +49,7 @@ from .mdp import (
     RacingEventsCfg,
     RacingEventsRandomCfg,
     RacingObsCfg,
+    RacingAsymObsCfg,
     RacingPrivilegedObsCfg,
     RacingRewardsCfg,
     RacingTerminationsCfg,
@@ -249,6 +250,32 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
 @configclass
 class MushrRacingPlayEnvCfg(MushrRacingRLEnvCfg):
     """No terminations, deterministic reset."""
+    rewards: RacingRewardsCfg = None
+    terminations: RacingTerminationsCfg = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+# ---------------------------------------------------------------------------
+# Asymmetric actor-critic Config (camera actor + privileged critic)
+# ---------------------------------------------------------------------------
+@configclass
+class MushrRacingAsymRLEnvCfg(MushrRacingRLEnvCfg):
+    """Same camera scene as MushrRacingRLEnvCfg, but the observation adds a
+    privileged `critic` group (cone state) alongside the camera `policy` group.
+
+    The actor stays camera-only; only the value function sees the privileged
+    cones. Pair with a CNN/CNNGRU policy cfg that sets `privileged_critic: true`
+    (racing_asym.yaml) so the critic bypasses the image encoder. This env is also
+    the rollout env for DAgger distillation (the `critic` group feeds the teacher).
+    """
+    observations: RacingAsymObsCfg = RacingAsymObsCfg()
+
+
+@configclass
+class MushrRacingAsymPlayEnvCfg(MushrRacingAsymRLEnvCfg):
+    """No terminations or rewards; for inference/eval of the asym policy."""
     rewards: RacingRewardsCfg = None
     terminations: RacingTerminationsCfg = None
 

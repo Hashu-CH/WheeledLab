@@ -74,6 +74,48 @@ class RacingObsCfg:
 
 
 @configclass
+class RacingAsymObsCfg(RacingObsCfg):
+    """Camera policy + privileged critic (asymmetric actor-critic).
+
+    The `policy` group is inherited from RacingObsCfg (camera + proprio), so the
+    ACTOR is camera-only and deployment is unchanged. The added `critic` group is
+    the exact cone state the privileged teacher uses (cones in car frame +
+    proprio). rsl_rl reads this group as the critic observation, so the value
+    function sees flawless perception while the actor does not.
+
+    The critic group layout is intentionally identical to
+    RacingPrivilegedObsCfg.PolicyCfg, so the same group also serves as the
+    teacher's input during DAgger distillation (see scripts/distill_policy.py).
+
+    Pair with a policy cfg that sets `privileged_critic: true` (the CNN nets
+    bypass their image encoder for this group) — see racing_asym.yaml. Used by
+    Isaac-MushrRacingAsymRL-v0.
+    """
+    @configclass
+    class CriticCfg(ObsGroup):
+        cones = ObsTerm(
+            func=mdp_sensors.cones_in_car_frame,
+            params={
+                "num_per_side": int(_OBS["cones_num_per_side"]),
+                "lookahead_m": float(_OBS["cones_lookahead_m"]),
+            },
+        )
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=_unoise("base_lin_vel_noise"))
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=_unoise("base_ang_vel_noise"))
+        last_action = ObsTerm(
+            func=mdp.last_action,
+            clip=tuple(_OBS["last_action_clip"]),
+            noise=_unoise("last_action_noise"),
+        )
+
+        def __post_init__(self) -> None:
+            self.enable_corruption = bool(_OBS["enable_corruption"])
+            self.concatenate_terms = bool(_OBS["concatenate_terms"])
+
+    critic: CriticCfg = CriticCfg()
+
+
+@configclass
 class RacingPrivilegedObsCfg:
     """Privileged ("perfect perception") observations for the racing task.
 

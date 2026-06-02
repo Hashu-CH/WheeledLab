@@ -3,8 +3,16 @@
 For racing: [(1,40,80) camera, (vel, ang, a_t-1) proprioceptive data]
 
 Note:
-- actor and critic share the same CNN. Will need to split if future
-  distillation or asymmetric critic is done.
+- By default actor and critic share the same CNN (symmetric: critic obs ==
+  actor obs == [image | proprio]).
+- `privileged_critic=True` decouples them for an ASYMMETRIC critic: the actor
+  still encodes the camera through the CNN, but the critic consumes a low-dim
+  privileged STATE vector (e.g. cone positions in car frame) directly — it
+  never touches the CNN. This is what the `critic` obs group in
+  RacingAsymObsCfg feeds. The critic's value estimates then carry no perception
+  noise, which sharply lowers PPO value-loss variance; the actor stays
+  camera-only so deployment is unchanged. See DEVELOPMENT.md "Asymmetric critic
+  + distillation".
 """
 
 from __future__ import annotations
@@ -80,6 +88,7 @@ class ActorCriticCNN(ActorCritic):
         activation: str = "relu",
         init_noise_std: float = 1.0,
         noise_std_type: str = "scalar",
+        privileged_critic: bool = False,
         **kwargs,
     ):
         # shape checks before parent init so a bad cfg fails fast
@@ -91,17 +100,22 @@ class ActorCriticCNN(ActorCritic):
                 f"num_actor_obs ({num_actor_obs}). Obs layout likely changed — "
                 f"update image_shape in the policy cfg."
             )
-        if n_img > num_critic_obs:
+        # Symmetric critic: critic obs also starts with the image, so it must be
+        # at least as large. Privileged critic: critic obs is a low-dim state
+        # vector with NO image, so this check does not apply (and would fail).
+        if not privileged_critic and n_img > num_critic_obs:
             raise ValueError(
                 f"ActorCriticCNN: image_shape numel ({n_img}) exceeds "
-                f"num_critic_obs ({num_critic_obs})."
+                f"num_critic_obs ({num_critic_obs}). If the critic obs is a "
+                f"privileged state vector (no image), set privileged_critic=True."
             )
 
-        # MLP head input = cnn projection + remaining proprio scalars
+        # Actor MLP head input = cnn projection + remaining proprio scalars.
+        # Critic MLP head input: privileged -> raw state vector; symmetric ->
+        # cnn projection + its own proprio (shared CNN).
         num_proprio_a = num_actor_obs - n_img
-        num_proprio_c = num_critic_obs - n_img
         enc_dim_a = cnn_out_dim + num_proprio_a
-        enc_dim_c = cnn_out_dim + num_proprio_c
+        enc_dim_c = num_critic_obs if privileged_critic else cnn_out_dim + (num_critic_obs - n_img)
 
         super().__init__(
             num_actor_obs=enc_dim_a,
@@ -116,8 +130,11 @@ class ActorCriticCNN(ActorCritic):
 
         self.image_shape = image_shape_t
         self._n_img = n_img
+        self.privileged_critic = privileged_critic
 
-        # shared cnn for actor and critic
+        # CNN encodes the actor's camera obs. With a symmetric critic it also
+        # encodes the critic obs (shared weights); with a privileged critic the
+        # critic never calls it.
         self.cnn = _build_cnn(
             self.image_shape,
             list(cnn_channels),
@@ -143,6 +160,10 @@ class ActorCriticCNN(ActorCritic):
         return super().act_inference(self._encode(observations))
 
     def evaluate(self, critic_observations, **kwargs):
+        # Privileged critic: raw state vector straight into the critic MLP (no
+        # CNN). Symmetric critic: same [image|proprio] encode as the actor.
+        if self.privileged_critic:
+            return super().evaluate(critic_observations)
         return super().evaluate(self._encode(critic_observations))
 
 
@@ -176,9 +197,10 @@ class ActorCriticCNNGRU(ActorCritic):
         activation: str = "relu",
         init_noise_std: float = 1.0,
         noise_std_type: str = "scalar",
+        privileged_critic: bool = False,
         **kwargs,
     ):
-        # define MLP head
+        # define MLP head (both heads consume the GRU hidden vector)
         super().__init__(
             num_actor_obs=rnn_hidden_dim,
             num_critic_obs=rnn_hidden_dim,
@@ -193,6 +215,7 @@ class ActorCriticCNNGRU(ActorCritic):
         # shape checks
         self.image_shape = tuple(image_shape)
         self._n_img = int(self.image_shape[0] * self.image_shape[1] * self.image_shape[2])
+        self.privileged_critic = privileged_critic
 
         if self._n_img > num_actor_obs:
             raise ValueError(
@@ -200,13 +223,17 @@ class ActorCriticCNNGRU(ActorCritic):
                 f"num_actor_obs ({num_actor_obs}). Obs layout likely changed — "
                 f"update image_shape in the policy cfg."
             )
-        if self._n_img > num_critic_obs:
+        # Symmetric critic obs starts with the image; privileged critic obs is a
+        # low-dim state vector with no image (so the check would wrongly fire).
+        if not privileged_critic and self._n_img > num_critic_obs:
             raise ValueError(
                 f"ActorCriticCNNGRU: image_shape numel ({self._n_img}) exceeds "
-                f"num_critic_obs ({num_critic_obs})."
+                f"num_critic_obs ({num_critic_obs}). If the critic obs is a "
+                f"privileged state vector (no image), set privileged_critic=True."
             )
 
-        # build shared cnn for both actor and critic.
+        # CNN front-end for the actor's camera. With a symmetric critic it is
+        # shared by the critic too; with a privileged critic the critic skips it.
         # TODO: whole network uses same wired 'activation'
         self.cnn = _build_cnn(
             self.image_shape,
@@ -217,13 +244,13 @@ class ActorCriticCNNGRU(ActorCritic):
             activation,
         )
 
-        # concatenate size of image observation and cnn latent rep
+        # GRU input dims. Actor: cnn projection + proprio. Critic: privileged ->
+        # the raw state vector (bypasses the CNN); symmetric -> cnn proj + proprio.
         num_proprio_a = num_actor_obs - self._n_img
-        num_proprio_c = num_critic_obs - self._n_img
         enc_dim_a = cnn_out_dim + num_proprio_a
-        enc_dim_c = cnn_out_dim + num_proprio_c
+        enc_dim_c = num_critic_obs if privileged_critic else cnn_out_dim + (num_critic_obs - self._n_img)
 
-        # separate gru memory encoders for both actor and critic 
+        # separate gru memory encoders for actor and critic
         self.memory_a = Memory(
             enc_dim_a, type=rnn_type, num_layers=rnn_num_layers, hidden_size=rnn_hidden_dim
         )
@@ -265,7 +292,9 @@ class ActorCriticCNNGRU(ActorCritic):
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None):
         """value estimate computation"""
-        enc = self._encode(critic_observations)
+        # Privileged critic: the raw state vector goes straight into memory_c
+        # (no CNN). Symmetric critic: encode the [image|proprio] obs like the actor.
+        enc = critic_observations if self.privileged_critic else self._encode(critic_observations)
         hid = self.memory_c(enc, masks, hidden_states)
         return super().evaluate(hid.squeeze(0))
 

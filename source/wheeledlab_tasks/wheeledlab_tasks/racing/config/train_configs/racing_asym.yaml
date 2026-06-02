@@ -1,0 +1,146 @@
+# Asymmetric actor-critic + distillation racing config.
+#
+# Camera CNN+GRU actor with a PRIVILEGED critic: the critic reads exact cone
+# positions (car frame) via the `critic` obs group, bypassing the image encoder,
+# so its value estimates carry no perception noise. The actor stays camera-only.
+#
+# This SAME file is used for two phases (the student net must be byte-identical
+# across them so the checkpoint hands off cleanly):
+#
+#   # Phase A — distill the privileged teacher into the camera student (DAgger):
+#   WHEELEDLAB_RACING_CONFIG=<abs path to this file> \
+#     python source/wheeledlab_rl/scripts/distill_policy.py \
+#       --teacher-run <path to a RSS_RACING_PRIVILEGED_CONFIG run folder>
+#
+#   # Phase B — RL fine-tune the distilled student with the asymmetric critic:
+#   WHEELEDLAB_RACING_CONFIG=<abs path to this file> \
+#     python source/wheeledlab_rl/scripts/train_rl.py -r RSS_RACING_ASYM_CONFIG \
+#       train.load_run=<distill run folder name>
+#
+# Derived from racing_default.yaml. Diffs from default are tagged ASYM-DIFF.
+
+run:
+  num_envs: 256
+  num_iterations: 1000
+
+env:
+  seed: 67
+  episode_length_s: 20
+  sim_dt: 0.01
+  decimation: 5
+
+terrain:
+  env_num_rows: 50
+  env_num_cols: 50
+  row_spacing: 0.25
+  col_spacing: 0.25
+  color_sampling: false
+  car_width_m: 0.28
+  difficulty_range: [0, .9]
+  phase_boundary: 0.0
+  steps_per_segment: 40
+  margin_frac: 0.1
+  cone_spacing_m: 0.75
+  track_width_m: 1
+  cone_curvature_scale: 2.0
+  tile_padding_cells: 10
+  ground_resolution_m: 1.0
+
+ppo:
+  num_steps_per_env: 256
+  max_iterations: 4000
+  save_interval: 50
+  experiment_name: "mushr_ppo_racing_asym"  # ASYM-DIFF
+  empirical_normalization: false      # image actor obs; keep off (single flag covers both actor+critic in rsl_rl)
+  algorithm:
+    value_loss_coef: 1
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    entropy_coef: 0.01
+    num_learning_epochs: 4
+    num_mini_batches: 4
+    learning_rate: 5.0e-4
+    schedule: "adaptive"
+    gamma: 0.99
+    lam: 0.95
+    desired_kl: 0.01
+    max_grad_norm: 1.0
+
+# Actor Critic Policy Params
+policy:
+  class_name: "ActorCriticCNNGRU"  # ASYM-DIFF: CNN+GRU camera student
+  init_noise_std: 1
+  activation: "relu"
+  actor_hidden_dims: [64, 64]
+  critic_hidden_dims: [64, 64]
+
+  # Obs output is 60,80 with 20 top cropped
+  image_shape: [3, 40, 80]
+  cnn_channels: [16, 32]
+  cnn_kernel_sizes: [5, 3]
+  cnn_strides: [2, 2]
+  cnn_out_dim: 64
+
+  # Memory temporal encoder params
+  rnn_type: "gru"
+  rnn_hidden_dim: 128
+  rnn_num_layers: 1
+
+  privileged_critic: true  # ASYM-DIFF: critic consumes the `critic` cone-state group, not the image
+
+rewards:
+  progress_rew_weight: 1.0
+  time_step_pen_weight: -0.01
+  off_track_pen_weight: -0.5
+  goal_reached_rew_weight: 15.0
+  out_of_tile_pen_weight: -20.0
+
+goals:
+  loop_dist_frac_range: [0.1, 0.95]
+  goal_reached_eps_m: 0.5
+
+events:
+  wheel_friction:
+    static_friction_range:  [0.4, 0.6]
+    dynamic_friction_range: [0.4, 0.6]
+    restitution_range:      [0.0, 0.0]
+    num_buckets: 10
+    make_consistent: false
+  base_mass_range:  [1.0, 3.0]
+  wheel_mass_range: [0.01, 0.3]
+  spawn_yaw_offset_deg_range: [-30.0, 30.0]
+  ground_noise_sigma: 0.5
+  ground_brightness_range: [0.2, 0.65]
+  ground_texture_update_interval: 256
+  ground_texture_resolution: 256
+
+# Observations
+observations:
+  enable_corruption: true
+  concatenate_terms: true
+  base_lin_vel_noise: [-0.1, 0.1]
+  base_ang_vel_noise: [-0.1, 0.1]
+  last_action_noise:  [-0.1, 0.1]
+  last_action_clip:   [-1.0, 1.0]
+  cones_num_per_side: 5     # next K gates ahead per side (orange L, blue R) -> 4K critic obs dims
+  cones_lookahead_m: 5.0    # arc-length look-ahead horizon (m)
+
+# WandB Logging
+logging:
+  video: true
+  video_length: 500
+  video_interval: 15000
+  video_resolution: [1280, 720]
+  video_crf: 30
+  log_every: 10
+  checkpoint_every: 1000
+  no_checkpoints: false
+  no_wandb: false
+  wandb_project: "WheeledLab"
+  no_log: false
+  test_mode: false
+
+  log_policy_camera: true
+  policy_camera_sensor_name: "camera"
+  policy_camera_env_id: 0
+  policy_camera_fps: 5

@@ -10,6 +10,8 @@ from .elevation import MushrElevationRLEnvCfg, MushrElevationPlayEnvCfg
 from .racing import (
     MushrRacingRLEnvCfg,
     MushrRacingPlayEnvCfg,
+    MushrRacingAsymRLEnvCfg,
+    MushrRacingAsymPlayEnvCfg,
     MushrRacingPrivilegedRLEnvCfg,
     MushrRacingPrivilegedPlayEnvCfg,
 )
@@ -49,6 +51,17 @@ gym.register(
         "env_cfg_entry_point": MushrRacingRLEnvCfg,
         "rsl_rl_cfg_entry_point": f"{mushr_racing_agents.__name__}.rsl_rl_ppo_cfg:MushrPPORunnerCfg",
         "play_env_cfg_entry_point": MushrRacingPlayEnvCfg,
+    }
+)
+
+gym.register(
+    id="Isaac-MushrRacingAsymRL-v0",
+    entry_point='isaaclab.envs:ManagerBasedRLEnv',
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": MushrRacingAsymRLEnvCfg,
+        "rsl_rl_cfg_entry_point": f"{mushr_racing_agents.__name__}.rsl_rl_ppo_cfg:MushrPPORunnerCfg",
+        "play_env_cfg_entry_point": MushrRacingAsymPlayEnvCfg,
     }
 )
 
