@@ -60,7 +60,14 @@ parser.add_argument("--explore-std", type=float, default=0.0,
 parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Grad-norm clip for the student update.")
 # Logging / saving.
 parser.add_argument("--run-name", type=str, default=None, help="Run folder name under the logs dir.")
+parser.add_argument("--logs-dir", type=str, default=None,
+                    help="Base logs directory the run folder is created under "
+                         "(default: WHEELEDLAB_RL_LOGS_DIR). Set to match train_rl's "
+                         "train.log.logs_dir so phase-B load_run can find the checkpoint.")
 parser.add_argument("--save-interval", type=int, default=10, help="Save a student checkpoint every n DAgger iters.")
+parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging of the BC loss / beta curves.")
+parser.add_argument("--wandb-project", type=str, default=None,
+                    help="wandb project (default: LogConfig.wandb_project).")
 parser.add_argument("--device", type=str, default="cuda:0", help="Torch device.")
 
 simulation_app, args_cli = startup(parser=parser)
@@ -159,8 +166,31 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
     # Build the student through the training runner so its checkpoint format is
     # identical to an RL run (phase B can resume from it directly).
     run_name = args_cli.run_name or f"racing_distill-{agent_cfg.seed}"
-    log_cfg = LogConfig(run_name=run_name, no_wandb=True, no_log=False, video=False)
+    log_kwargs = dict(run_name=run_name, no_wandb=args_cli.no_wandb, no_log=False, video=False)
+    if args_cli.logs_dir is not None:
+        log_kwargs["logs_dir"] = args_cli.logs_dir
+    log_cfg = LogConfig(**log_kwargs)
     os.makedirs(log_cfg.model_save_path, exist_ok=True)
+    print(f"[distill] writing student checkpoints under: {log_cfg.run_log_dir}")
+
+    wandb_run = None
+    if not log_cfg.no_wandb:
+        import wandb
+        wandb_run = wandb.init(
+            project=args_cli.wandb_project or log_cfg.wandb_project,
+            name=run_name,
+            config={
+                "phase": "distill",
+                "task": args_cli.task,
+                "teacher_run": args_cli.teacher_run,
+                "num_envs": args_cli.num_envs,
+                "dagger_iters": args_cli.dagger_iters,
+                "steps_per_iter": args_cli.steps_per_iter,
+                "lr": args_cli.lr,
+                "beta_start": args_cli.beta_start,
+                "beta_end": args_cli.beta_end,
+            },
+        )
 
     runner = ModifiedRslRunner(env, agent_cfg.to_dict(), log_cfg, device=device)
     student = _get_student_policy(runner)
@@ -251,6 +281,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
         avg_loss = running_loss / args_cli.steps_per_iter
         print(f"[distill] iter {it:4d} | beta {beta:.3f} | bc_mse {avg_loss:.5f}")
+        if wandb_run is not None:
+            wandb_run.log({"distill/bc_mse": avg_loss, "distill/beta": beta}, step=it)
 
         if (it % args_cli.save_interval == 0) or (it == n_iters - 1):
             save_path = os.path.join(log_cfg.model_save_path, f"model_{it}.pt")
@@ -259,6 +291,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg, agent_cfg):
 
     print(f"[distill] Done. Resume phase-B RL fine-tune with:\n"
           f"  train_rl.py -r RSS_RACING_ASYM_CONFIG train.load_run={run_name}")
+    if wandb_run is not None:
+        wandb_run.finish()
     env.close()
 
 

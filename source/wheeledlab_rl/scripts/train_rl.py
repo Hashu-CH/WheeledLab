@@ -123,8 +123,11 @@ def main(run_cfg: RunConfig): # TODO: Add SB3 config support
         chkpt = "model_"
         if train_cfg.load_run_checkpoint > 0:
             chkpt = f"{chkpt}{train_cfg.load_run_checkpoint}"
-        # get path to previous checkpoint
-        resume_path = get_checkpoint_path(WHEELEDLAB_RL_LOGS_DIR, run_dir=train_cfg.load_run,
+        # get path to previous checkpoint. Resolve against the configured logs
+        # dir (log_cfg.logs_dir) rather than the hardcoded default, so runs that
+        # set train.log.logs_dir (e.g. the racing-only logs path) can still chain
+        # load_run -> checkpoint. Defaults to WHEELEDLAB_RL_LOGS_DIR.
+        resume_path = get_checkpoint_path(log_cfg.logs_dir, run_dir=train_cfg.load_run,
                                         other_dirs=["models"], checkpoint=f"{chkpt}.*")
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
