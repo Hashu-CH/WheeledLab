@@ -61,6 +61,9 @@ class RacingTerrainImporter(TerrainImporter):
         self._cumulative_arc_t: torch.Tensor | None = None
         self._total_lengths_t: torch.Tensor | None = None
         self._is_closed_t: torch.Tensor | None = None
+        self._left_cones_t: torch.Tensor | None = None
+        self._right_cones_t: torch.Tensor | None = None
+        self._cone_arcs_t: torch.Tensor | None = None
         self.prev_dist_to_finish: torch.Tensor | None = None
         self.goal_arc_length: torch.Tensor | None = None
 
@@ -85,6 +88,9 @@ class RacingTerrainImporter(TerrainImporter):
         self._cumulative_arc_t = torch.as_tensor(tc.cumulative_arc_lengths_m, dtype=torch.float32, device=device)
         self._total_lengths_t = torch.as_tensor(tc.total_lengths_m, dtype=torch.float32, device=device)
         self._is_closed_t = torch.as_tensor(tc.is_closed, dtype=torch.bool, device=device)
+        self._left_cones_t = torch.as_tensor(tc.left_cone_positions_w, dtype=torch.float32, device=device)
+        self._right_cones_t = torch.as_tensor(tc.right_cone_positions_w, dtype=torch.float32, device=device)
+        self._cone_arcs_t = torch.as_tensor(tc.cone_arcs_m, dtype=torch.float32, device=device)
 
     # ------------------------------------------------------------------
     # Helper utilities for interacting with geometry features of track/render
@@ -138,6 +144,105 @@ class RacingTerrainImporter(TerrainImporter):
         right_half_at = right_a + t_param * (right_b - right_a)
 
         return d_signed, nearest_tangent, (left_half_at, right_half_at), arc_length, seg_idx
+
+
+    def cones_in_car_frame(
+        self,
+        poses_xy_w: torch.Tensor,
+        yaw_w: torch.Tensor,
+        env_ids: torch.Tensor,
+        num_per_side: int,
+        lookahead_m: float,
+        pad_value: float = 0.0,
+    ) -> torch.Tensor:
+        """The next K cone gates ahead (by centerline arc-length), in the car frame.
+
+        This is the privileged ("perfect perception") observation: it returns
+        the exact cone positions authored into the USD, transformed into the car
+        frame (x = forward, y = left), so a policy can be trained as if its
+        perception were flawless. Compare against the camera policy to isolate
+        perception error from control/planning error.
+
+        Ordering is by arc-length along the tile centerline, NOT Euclidean
+        distance: each cone has a fixed arc position, the car is projected to its
+        arc position, and cones are ranked by how far ahead they are
+        (delta = cone_arc - car_arc; wrapped modulo track length on closed
+        loops). This gives a stable "next gate, next-next gate, ..." sequence
+        that doesn't reshuffle as the car yaws — unlike nearest-by-distance,
+        where a cone drifting in/out of a tie shifts every slot.
+
+        left[i] and right[i] share an arc, so slot i of each block is the two
+        posts of the same upcoming gate.
+
+        Selection: cones with 0 < delta <= lookahead_m, the `num_per_side`
+        smallest deltas, nearest-gate-first. Empty slots are `pad_value`.
+
+        Args:
+        - poses_xy_w: (N, 2) world-meter car positions.
+        - yaw_w: (N,) car heading (radians, world frame).
+        - env_ids: (N,) int tile indices (env_id == tile_id by invariant).
+        - num_per_side: K gates to emit per side (orange left, then blue right).
+        - lookahead_m: arc-length horizon ahead (m); cones beyond it are padded.
+        - pad_value: fill for empty slots.
+
+        Returns:
+        - (N, 4 * num_per_side): [Lx0,Ly0,...,Lx{K-1},Ly{K-1}, Rx0,Ry0,...],
+          left (orange) gates first then right (blue), each a car-frame (x,y)
+          pair ordered by increasing arc-length ahead.
+        """
+        self._ensure_track_tensors(poses_xy_w.device)
+
+        # Car arc-length along its tile centerline (same frame as cone arcs).
+        _, _, _, car_arc, _ = self.project_to_centerline(poses_xy_w, env_ids)  # (N,)
+
+        cone_arcs = self._cone_arcs_t[env_ids]            # (N, C), NaN-padded
+        total = self._total_lengths_t[env_ids].clamp_min(1e-6).unsqueeze(1)  # (N,1)
+        is_closed = self._is_closed_t[env_ids].unsqueeze(1)                  # (N,1)
+
+        # Guarantee at least K columns so the top-K slice always yields K slots
+        # (degenerate tracks may have C < K). Pad columns are NaN -> invalid.
+        C = cone_arcs.shape[1]
+        left_w = self._left_cones_t[env_ids]              # (N, C, 2)
+        right_w = self._right_cones_t[env_ids]            # (N, C, 2)
+        if C < num_per_side:
+            pad_n = num_per_side - C
+            cone_arcs = torch.cat(
+                [cone_arcs, cone_arcs.new_full((cone_arcs.shape[0], pad_n), float("nan"))], dim=1)
+            col_pad = left_w.new_full((left_w.shape[0], pad_n, 2), float("nan"))
+            left_w = torch.cat([left_w, col_pad], dim=1)
+            right_w = torch.cat([right_w, col_pad.clone()], dim=1)
+
+        # Arc-length ahead: linear for chains, wrapped for closed loops so a cone
+        # just behind the car becomes ~one lap ahead (and falls past lookahead).
+        raw = cone_arcs - car_arc.unsqueeze(1)            # (N, C)
+        delta = torch.where(is_closed, torch.remainder(raw, total), raw)
+        invalid = torch.isnan(cone_arcs) | (delta <= 0.0) | (delta > lookahead_m)
+
+        # Shared gate ordering: left[i]/right[i] are the same gate, so one sort
+        # selects matching posts on both sides.
+        delta_sorted = torch.where(invalid, torch.full_like(delta, float("inf")), delta)
+        order = delta_sorted.argsort(dim=1)[:, :num_per_side]   # (N, K)
+        sel_invalid = torch.gather(invalid, 1, order)           # (N, K)
+
+        # Rotate world->car: car x = forward = (cos yaw, sin yaw),
+        # y = left = (-sin yaw, cos yaw). For a relative vector (dx, dy):
+        #   x_car =  cos*dx + sin*dy ;  y_car = -sin*dx + cos*dy
+        cos_y = torch.cos(yaw_w).unsqueeze(1)             # (N, 1)
+        sin_y = torch.sin(yaw_w).unsqueeze(1)
+
+        def _gather_side(cones_w: torch.Tensor) -> torch.Tensor:
+            rel = cones_w - poses_xy_w.unsqueeze(1)       # (N, C, 2)
+            x =  cos_y * rel[..., 0] + sin_y * rel[..., 1]
+            y = -sin_y * rel[..., 0] + cos_y * rel[..., 1]
+            car = torch.stack([x, y], dim=-1)             # (N, C, 2)
+            sel = torch.gather(car, 1, order.unsqueeze(-1).expand(-1, -1, 2))  # (N, K, 2)
+            sel = torch.where(sel_invalid.unsqueeze(-1),
+                              torch.full_like(sel, pad_value), sel)
+            return sel.reshape(sel.shape[0], -1)          # (N, 2K)
+
+        left = _gather_side(left_w)
+        right = _gather_side(right_w)
+        return torch.cat([left, right], dim=-1)           # (N, 4K)
 
 
     def update_progress(self, env_ids: torch.Tensor, root_pos_xy_w: torch.Tensor) -> torch.Tensor:

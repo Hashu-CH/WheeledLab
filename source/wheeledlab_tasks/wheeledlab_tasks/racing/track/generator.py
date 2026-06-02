@@ -138,6 +138,17 @@ class TrackCache:
     tile_origins_w: np.ndarray # (num_tiles, 2), world-meter tile centers
     tile_extent_m: tuple[float, float] # (x_extent, y_extent) per tile, meters (fixed here)
     tile_cell_bounds: np.ndarray # (num_tiles, 4): row_start, row_end, col_start, col_end
+    # World-meter cone positions per tile, NaN-padded to a common length so the
+    # privileged observation can transform them into the car frame at runtime.
+    # These are the SAME positions authored into the USD by _spawn_cones_in_stage,
+    # so "perfect perception" exactly matches the cones the camera renders.
+    # Left = orange (CCW-normal side of travel), right = blue.
+    left_cone_positions_w: np.ndarray  # (num_tiles, C_max, 2), float32, NaN-padded
+    right_cone_positions_w: np.ndarray # (num_tiles, C_max, 2), float32, NaN-padded
+    # Arc-length (m) of each cone gate along the tile centerline, shared by left
+    # and right by index. Lets the privileged obs order cones into a stable gate
+    # sequence (next-K-ahead) instead of by Euclidean distance. NaN-padded.
+    cone_arcs_m: np.ndarray            # (num_tiles, C_max), float32, NaN-padded
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +202,15 @@ def _compute_cone_positions(
     half_width_m: float,
     cone_spacing_m: float,
     curvature_scale: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return (left_positions, right_positions) arrays of shape (N, 2).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (left_positions, right_positions, sample_arcs).
+
+    left/right are (N, 2) world-meter cone positions; sample_arcs is (N,) the
+    arc-length along the centerline at which each cone pair sits. left[i] and
+    right[i] are the two posts of the same gate, at arc sample_arcs[i] — so the
+    privileged observation can order cones into a stable gate sequence by
+    arc-length (rather than by Euclidean distance, which reorders as the car
+    turns).
 
     Left/right are defined relative to the direction of travel along the
     centerline. Left = 90° CCW from tangent, right = 90° CW.
@@ -209,7 +227,9 @@ def _compute_cone_positions(
     so the reward boundary matches the visible cone gate exactly.
     """
     if len(polyline_w) < 2:
-        return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+        return (np.empty((0, 2), dtype=np.float32),
+                np.empty((0, 2), dtype=np.float32),
+                np.empty((0,), dtype=np.float32))
 
     # Arc-length prefix sum along centerline
     diffs = np.diff(polyline_w, axis=0)                         # (M-1, 2)
@@ -217,7 +237,9 @@ def _compute_cone_positions(
     cum_len = np.concatenate([[0.0], np.cumsum(seg_lens)])       # (M,)
     total_len = cum_len[-1]
     if total_len < cone_spacing_m:
-        return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
+        return (np.empty((0, 2), dtype=np.float32),
+                np.empty((0, 2), dtype=np.float32),
+                np.empty((0,), dtype=np.float32))
 
     # Per-vertex curvature + clamped widths; reused by the reward via TrackCache.
     kappa_v_signed, left_v, right_v = _per_vertex_half_widths(polyline_w, half_width_m)
@@ -263,7 +285,9 @@ def _compute_cone_positions(
     left_pos  = sample_pts + left_half_w[:, None]  * left_n
     right_pos = sample_pts + right_half_w[:, None] * right_n
 
-    return left_pos.astype(np.float32), right_pos.astype(np.float32)
+    return (left_pos.astype(np.float32),
+            right_pos.astype(np.float32),
+            sample_arcs.astype(np.float32))
 
 
 def _spawn_cones_in_stage(
@@ -435,6 +459,7 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     _planner_track_cells = max(1, int(np.ceil(_track_width_m / row_spacing)))
     left_boundary_positions: list[np.ndarray] = []
     right_boundary_positions: list[np.ndarray] = []
+    cone_arcs_per_tile: list[np.ndarray] = []  # arc-length of each cone gate along centerline
 
     # Generate per-env tracks and build track data cache.
     # Each tile occupies a padded_num_rows × padded_num_cols slot in the global
@@ -476,11 +501,12 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
             tile_left_half_widths_m.append(left_v)
             tile_right_half_widths_m.append(right_v)
 
-            left_pos, right_pos = _compute_cone_positions(
+            left_pos, right_pos, cone_arcs = _compute_cone_positions(
                 tile_polylines_w[-1], cone_half_w, cone_spacing_m, curvature_scale
             )
             left_boundary_positions.append(left_pos)
             right_boundary_positions.append(right_pos)
+            cone_arcs_per_tile.append(cone_arcs)
 
             # Tile origin: world-meter center of the inner track area.
             # Used by out_of_tile() with tile_extent_m = inner track size.
@@ -529,6 +555,29 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
     ) # (num_tiles, M_max)
     total_lengths_m = cumulative_arc_lengths_m[:, -1].astype(np.float32) # (num_tiles,)
 
+    # Pad per-tile cone position lists to a common length C_max with NaN so the
+    # privileged observation can index per-env and mask padding by NaN.
+    C_max = max(
+        (max(len(l), len(r)) for l, r in zip(left_boundary_positions, right_boundary_positions)),
+        default=0,
+    )
+    C_max = max(C_max, 1)  # keep a non-degenerate trailing axis even with no cones
+    left_cone_positions_w  = np.full((num_tiles, C_max, 2), np.nan, dtype=np.float32)
+    right_cone_positions_w = np.full((num_tiles, C_max, 2), np.nan, dtype=np.float32)
+    # Per-cone arc-length, shared by left/right by index (left[i]/right[i] are the
+    # two posts of gate i). NaN-padded so the obs can mask padding and order by arc.
+    cone_arcs_m = np.full((num_tiles, C_max), np.nan, dtype=np.float32)
+    for k in range(num_tiles):
+        lp = left_boundary_positions[k]
+        rp = right_boundary_positions[k]
+        ca = cone_arcs_per_tile[k]
+        if len(lp):
+            left_cone_positions_w[k, :len(lp)] = lp
+        if len(rp):
+            right_cone_positions_w[k, :len(rp)] = rp
+        if len(ca):
+            cone_arcs_m[k, :len(ca)] = ca
+
     track_cache = TrackCache(
         polylines_w=polylines_w,
         tangents_w=tangents_w,
@@ -542,6 +591,9 @@ def generated_colored_track_plane(map_size, spacing, env_size, color_sampling=Fa
         tile_origins_w=tile_origins_w,
         tile_extent_m=(env_num_cols * col_spacing, env_num_rows * row_spacing),
         tile_cell_bounds=tile_cell_bounds,
+        left_cone_positions_w=left_cone_positions_w,
+        right_cone_positions_w=right_cone_positions_w,
+        cone_arcs_m=cone_arcs_m,
     )
 
     # UV coordinates: vertex interpolation, u=col→[0,1], v=row→[0,1].

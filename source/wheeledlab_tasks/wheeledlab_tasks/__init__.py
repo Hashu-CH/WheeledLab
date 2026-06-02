@@ -7,7 +7,12 @@ import gymnasium as gym
 from .drifting import MushrDriftRLEnvCfg, MushrDriftPlayEnvCfg
 from .visual import MushrVisualRLEnvCfg, MushrVisualPlayEnvCfg
 from .elevation import MushrElevationRLEnvCfg, MushrElevationPlayEnvCfg
-from .racing import MushrRacingRLEnvCfg, MushrRacingPlayEnvCfg
+from .racing import (
+    MushrRacingRLEnvCfg,
+    MushrRacingPlayEnvCfg,
+    MushrRacingPrivilegedRLEnvCfg,
+    MushrRacingPrivilegedPlayEnvCfg,
+)
 import wheeledlab_tasks.drifting.config.agents.mushr as mushr_drift_agents
 import wheeledlab_tasks.visual.config.agents.mushr as mushr_visual_agents
 import wheeledlab_tasks.elevation.config.agents.mushr as mushr_elevation_agents
@@ -44,6 +49,17 @@ gym.register(
         "env_cfg_entry_point": MushrRacingRLEnvCfg,
         "rsl_rl_cfg_entry_point": f"{mushr_racing_agents.__name__}.rsl_rl_ppo_cfg:MushrPPORunnerCfg",
         "play_env_cfg_entry_point": MushrRacingPlayEnvCfg,
+    }
+)
+
+gym.register(
+    id="Isaac-MushrRacingPrivilegedRL-v0",
+    entry_point='isaaclab.envs:ManagerBasedRLEnv',
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": MushrRacingPrivilegedRLEnvCfg,
+        "rsl_rl_cfg_entry_point": f"{mushr_racing_agents.__name__}.rsl_rl_ppo_cfg:MushrPPORunnerCfg",
+        "play_env_cfg_entry_point": MushrRacingPrivilegedPlayEnvCfg,
     }
 )
 

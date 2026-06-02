@@ -21,6 +21,8 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import Camera
 from isaaclab.envs.mdp import *
 
+from wheeledlab.envs.mdp import root_euler_xyz
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
@@ -47,3 +49,33 @@ def camera_data_rgb_flattened_aug(env: ManagerBasedEnv, sensor_cfg: SceneEntityC
     images = gaussian_blur(images)
     normalized_imgs = rgb_normalize(images)
     return normalized_imgs.reshape(B, -1)
+
+
+# ---------------------------------------------------------------------------
+# Privileged ("perfect perception") observation
+# ---------------------------------------------------------------------------
+def cones_in_car_frame(
+    env: ManagerBasedEnv,
+    num_per_side: int = 5,
+    lookahead_m: float = 5.0,
+    pad_value: float = 0.0,
+) -> torch.Tensor:
+    """Next K cone gates ahead (by centerline arc-length), in the car body frame.
+
+    Privileged track perception: bypasses the camera, reads the exact authored
+    cone positions from the track cache (env.scene.terrain), and returns the
+    next `num_per_side` gates on each side (orange left, then blue right) within
+    `lookahead_m` arc-length ahead, as car-frame (x=forward, y=left) pairs.
+    Ordering is by arc-length, not Euclidean distance, so the gate sequence is
+    stable as the car yaws. Empty slots are `pad_value`. Output dim = 4 * K.
+
+    Use to test whether the policy/controller can race given flawless
+    perception; if it can, perception is the bottleneck.
+    """
+    terrain = env.scene.terrain
+    env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
+    root_pos_xy = root_pos_w(env)[:, :2]
+    yaw = root_euler_xyz(env)[:, 2]
+    return terrain.cones_in_car_frame(
+        root_pos_xy, yaw, env_ids, num_per_side, lookahead_m, pad_value
+    )

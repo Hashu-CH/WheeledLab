@@ -49,6 +49,7 @@ from .mdp import (
     RacingEventsCfg,
     RacingEventsRandomCfg,
     RacingObsCfg,
+    RacingPrivilegedObsCfg,
     RacingRewardsCfg,
     RacingTerminationsCfg,
 )
@@ -248,6 +249,49 @@ class MushrRacingRLEnvCfg(ManagerBasedRLEnvCfg):
 @configclass
 class MushrRacingPlayEnvCfg(MushrRacingRLEnvCfg):
     """No terminations, deterministic reset."""
+    rewards: RacingRewardsCfg = None
+    terminations: RacingTerminationsCfg = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+
+# ---------------------------------------------------------------------------
+# Privileged ("perfect perception") Config
+# ---------------------------------------------------------------------------
+@configclass
+class MushrRacingPrivilegedSceneCfg(MushrRacingSceneCfg):
+    """Racing scene without the camera.
+
+    The privileged policy reads cone positions from the track cache, so the
+    TiledCamera is pure overhead — dropping it skips per-step rendering. Isaac
+    Lab's InteractiveScene skips entity cfg members set to None.
+    """
+    camera = None
+
+
+@configclass
+class MushrRacingPrivilegedRLEnvCfg(MushrRacingRLEnvCfg):
+    """Privileged variant: cone positions (car frame) + proprio instead of camera.
+
+    Pair with an MLP (policy.class_name == "ActorCritic") since the observation
+    is a low-dim vector, not an image. Use racing_privileged.yaml (set
+    WHEELEDLAB_RACING_CONFIG) so the cone obs params and MLP policy are active.
+    """
+    observations: RacingPrivilegedObsCfg = RacingPrivilegedObsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Rebuild the scene without the camera (base __post_init__ built the
+        # camera-bearing one). Cheap — only sizing math runs in configure().
+        self.scene = MushrRacingPrivilegedSceneCfg(
+            num_envs=self.num_envs, env_spacing=self.env_spacing,
+        )
+
+
+@configclass
+class MushrRacingPrivilegedPlayEnvCfg(MushrRacingPrivilegedRLEnvCfg):
+    """No terminations or rewards; for inference/eval of the privileged policy."""
     rewards: RacingRewardsCfg = None
     terminations: RacingTerminationsCfg = None
 

@@ -1,7 +1,17 @@
-# Sweep run: CNN + MLP actor-critic. Differs from _base.yaml only at marked lines.
+# Privileged ("perfect perception") racing config.
+#
+# Replaces the camera with exact cone positions (car frame) + proprio, and uses
+# an MLP (ActorCritic) instead of a CNN. Use to test whether the controller can
+# race given flawless perception:
+#
+#   WHEELEDLAB_RACING_CONFIG=<abs path to this file> \
+#     python source/wheeledlab_rl/scripts/train_rl.py -r RSS_RACING_PRIVILEGED_CONFIG
+#
+# Derived from racing_default.yaml. Diffs from default are tagged PRIV-DIFF.
+
 run:
-  num_envs: 64        # parallel envs (envs == num tracks)
-  num_iterations: 1000 # upper bound training steps
+  num_envs: 256
+  num_iterations: 1000
 
 env:
   seed: 67
@@ -16,31 +26,29 @@ terrain:
   col_spacing: 0.25
   color_sampling: false
   car_width_m: 0.28
-  difficulty_range: [0, 1]
-  phase_boundary: 0.3
-  cone_spacing_m: 0.75        # nominal arc-length spacing; denser on turns
-  track_width_m: 1        # full L-to-R cone corridor — ~2.5x car_width_m. Single
-                            # source of truth: cones, reward, AND routing planner
-                            # all derive from it.
-  cone_curvature_scale: 2.0 # density multiplier on turns; 0 = uniform spacing
-  tile_padding_cells: 10    # gap cells between tiles (~2.5 m at 0.25 m/cell)
-  ground_resolution_m: 1.0  # ground grid cell size for texture DR
+  difficulty_range: [0, .9]
+  phase_boundary: 0.0
   steps_per_segment: 40
   margin_frac: 0.1
+  cone_spacing_m: 0.75
+  track_width_m: 1
+  cone_curvature_scale: 2.0
+  tile_padding_cells: 10
+  ground_resolution_m: 1.0
 
 ppo:
   num_steps_per_env: 256
   max_iterations: 4000
   save_interval: 50
-  experiment_name: "mushr_ppo_racing_cnn"   # SWEEP-DIFF
-  empirical_normalization: false
+  experiment_name: "mushr_ppo_racing_privileged"  # PRIV-DIFF
+  empirical_normalization: true                    # PRIV-DIFF: low-dim vector obs benefits from normalization
   algorithm:
     value_loss_coef: 1
     use_clipped_value_loss: true
     clip_param: 0.2
     entropy_coef: 0.01
     num_learning_epochs: 4
-    num_mini_batches: 1 # if memeory allows increase in envs can inc this
+    num_mini_batches: 4
     learning_rate: 5.0e-4
     schedule: "adaptive"
     gamma: 0.99
@@ -49,16 +57,17 @@ ppo:
     max_grad_norm: 1.0
 
 policy:
-  class_name: "ActorCriticCNN"                 # SWEEP-DIFF
+  class_name: "ActorCritic"   # PRIV-DIFF: MLP, not CNN — obs is a low-dim vector
   init_noise_std: 1
   activation: "relu"
   actor_hidden_dims: [64, 64]
   critic_hidden_dims: [64, 64]
+  # Image/CNN/RNN fields kept for schema compatibility; ignored by ActorCritic.
   image_shape: [3, 40, 80]
-  cnn_channels: [8, 16]                        # SWEEP-DIFF: halved from (16,32) for memory
+  cnn_channels: [16, 32]
   cnn_kernel_sizes: [5, 3]
   cnn_strides: [2, 2]
-  cnn_out_dim: 32                              # SWEEP-DIFF: halved from 64
+  cnn_out_dim: 64
   rnn_type: "gru"
   rnn_hidden_dim: 128
   rnn_num_layers: 1
@@ -84,10 +93,10 @@ events:
   base_mass_range:  [1.0, 3.0]
   wheel_mass_range: [0.01, 0.3]
   spawn_yaw_offset_deg_range: [-30.0, 30.0]
-  ground_noise_sigma: 0.5               # Gaussian blur radius in texture pixels (0=pure pixel noise, ~3=smooth blobs)
-  ground_brightness_range: [0.2, 0.65] # skewed light to match dry cement; widens to cover oil stains / wet patches
-  ground_texture_update_interval: 256  # policy steps between texture writes
-  ground_texture_resolution: 256       # noise image size in pixels (square)
+  ground_noise_sigma: 0.5
+  ground_brightness_range: [0.2, 0.65]
+  ground_texture_update_interval: 256
+  ground_texture_resolution: 256
 
 observations:
   enable_corruption: true
@@ -96,7 +105,7 @@ observations:
   base_ang_vel_noise: [-0.1, 0.1]
   last_action_noise:  [-0.1, 0.1]
   last_action_clip:   [-1.0, 1.0]
-  cones_num_per_side: 5     # privileged-only; built at import for all runs
+  cones_num_per_side: 5     # next K gates ahead per side (orange L, blue R) -> 4K obs dims
   cones_lookahead_m: 5.0    # arc-length look-ahead horizon (m)
 
 logging:
@@ -112,7 +121,7 @@ logging:
   wandb_project: "WheeledLab"
   no_log: false
   test_mode: false
-  log_policy_camera: true
+  log_policy_camera: false  # PRIV-DIFF: no camera sensor in the privileged scene
   policy_camera_sensor_name: "camera"
   policy_camera_env_id: 0
   policy_camera_fps: 5

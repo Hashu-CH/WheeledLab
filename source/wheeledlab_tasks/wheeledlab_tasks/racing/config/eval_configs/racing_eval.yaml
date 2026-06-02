@@ -51,6 +51,8 @@ observations:
   base_ang_vel_noise: [-0.1, 0.1]
   last_action_noise:  [-0.1, 0.1]
   last_action_clip:   [-1.0, 1.0]
+  cones_num_per_side: 5     # privileged-only; built at import for all runs
+  cones_lookahead_m: 5.0    # arc-length look-ahead horizon (m)
 
 logging:                  # eval_racing.py reads no_wandb / wandb_project / wandb_group from here
   no_wandb: false                      # set true to disable wandb at eval

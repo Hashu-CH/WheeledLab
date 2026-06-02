@@ -113,6 +113,10 @@ observations:
   base_ang_vel_noise: [-0.1, 0.1]
   last_action_noise:  [-0.1, 0.1]
   last_action_clip:   [-1.0, 1.0]
+  # Privileged ("perfect perception") cone observation (car frame). Only the
+  # privileged env reads these, but the obs cfg is built at import for all runs.
+  cones_num_per_side: 5     # next K gates ahead per side (orange L, blue R) -> 4K obs dims
+  cones_lookahead_m: 5.0    # arc-length look-ahead horizon (m)
 
 # WandB Logging
 logging:
